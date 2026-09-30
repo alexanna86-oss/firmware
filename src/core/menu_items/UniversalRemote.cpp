@@ -2,12 +2,14 @@
 #include "core/display.h"
 #include "core/utils.h"
 #include "modules/universal_remote/nanoleaf_remote.h"
+#include "modules/universal_remote/ota_update.h"
 #include "modules/NRF24/nrf_rc_learn.h"
 
 void UniversalRemoteMenu::optionsMenu() {
     options.clear();
     options.push_back({"Nanoleaf", nanoleafMenu});
     options.push_back({"NRF24 RC Learn", nrf_rc_learn});
+    options.push_back({"OTA Update", universalRemoteOta});
     options.push_back({"Xiaomi TV / Joyn", []() {
         displayInfo("TV/Joyn module is next", true);
     }});
