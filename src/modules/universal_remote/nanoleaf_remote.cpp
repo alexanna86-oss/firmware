@@ -74,6 +74,18 @@ static void setBrightness(int value) {
     nlPut("state", "{\"brightness\":{\"value\":" + String(value) + "}}");
 }
 
+static void setHue(int value) {
+    nlPut("state", "{\"hue\":{\"value\":" + String(value) + "}}");
+}
+
+static void setSaturation(int value) {
+    nlPut("state", "{\"sat\":{\"value\":" + String(value) + "}}");
+}
+
+static void setColorTemperature(int value) {
+    nlPut("state", "{\"ct\":{\"value\":" + String(value) + "}}");
+}
+
 static void setEffect() {
     String effect = keyboard("", 80, "Nanoleaf scene/effect:");
     if (effect.isEmpty()) return;
@@ -90,6 +102,11 @@ void nanoleafMenu() {
         {"Brightness 25%", []() { setBrightness(25); }},
         {"Brightness 50%", []() { setBrightness(50); }},
         {"Brightness 100%", []() { setBrightness(100); }},
+        {"Red", []() { setHue(0); setSaturation(100); }},
+        {"Green", []() { setHue(120); setSaturation(100); }},
+        {"Blue", []() { setHue(240); setSaturation(100); }},
+        {"Warm White", []() { setSaturation(0); setColorTemperature(4000); }},
+        {"Cool White", []() { setSaturation(0); setColorTemperature(6500); }},
         {"Scene / Effect", setEffect},
         {"Setup IP + Token", setupNanoleaf},
     };
