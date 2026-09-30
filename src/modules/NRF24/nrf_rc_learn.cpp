@@ -76,6 +76,21 @@ void nrf_rc_learn() {
     uint8_t best = 0;
     for (uint8_t ch = 1; ch < 126; ++ch) if (hits[ch] > hits[best]) best = ch;
 
+    // Persist the complete activity map, not only the strongest channel.
+    // This allows later inspection of every active channel without rescanning.
+    Preferences scanPrefs;
+    scanPrefs.begin("nrf-rc-learn", false);
+    scanPrefs.putBytes("scanHits", hits, sizeof(hits));
+    uint8_t activeChannels[126] = {0};
+    uint8_t activeCount = 0;
+    for (uint8_t ch = 0; ch < 126; ++ch) {
+        if (hits[ch] > 0) activeChannels[activeCount++] = ch;
+    }
+    scanPrefs.putUChar("activeCount", activeCount);
+    scanPrefs.putBytes("activeCh", activeChannels, activeCount);
+    scanPrefs.putUChar("bestChannel", best);
+    scanPrefs.end();
+
     String scanMsg = "CH " + String(best) + " / " + String(2400 + best) + "MHz\nPress RC button";
     displayInfo(scanMsg);
 
