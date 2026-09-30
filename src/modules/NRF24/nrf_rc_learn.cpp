@@ -127,3 +127,76 @@ void nrf_rc_learn() {
                  (foundRate == RF24_250KBPS ? "250K" : foundRate == RF24_2MBPS ? "2M" : "1M");
     displaySuccess(msg, true);
 }
+
+
+static void showSavedChannels() {
+    Preferences p;
+    p.begin("nrf-rc-learn", true);
+    uint8_t n = p.getUChar("activeCount", 0);
+    uint8_t channels[126] = {0};
+    if (n) p.getBytes("activeCh", channels, n);
+    p.end();
+    if (!n) {
+        displayWarning("No saved channels", true);
+        return;
+    }
+    String msg = "Saved channels:\n";
+    uint8_t shown = n > 18 ? 18 : n;
+    for (uint8_t i = 0; i < shown; ++i) {
+        msg += String(channels[i]);
+        if (i + 1 < shown) msg += ", ";
+    }
+    if (n > shown) msg += "\n+" + String(n - shown) + " more";
+    displayInfo(msg, true);
+}
+
+static void replaySavedPacket() {
+    Preferences p;
+    p.begin("nrf-rc-learn", true);
+    uint8_t channel = p.getUChar("channel", 255);
+    uint8_t rateRaw = p.getUChar("rate", (uint8_t)RF24_1MBPS);
+    uint8_t width = p.getUChar("width", 0);
+    uint8_t count = p.getUChar("count", 0);
+    uint8_t packets[8 * 32] = {0};
+    size_t bytes = (size_t)count * width;
+    if (bytes > sizeof(packets)) bytes = sizeof(packets);
+    if (bytes) p.getBytes("packets", packets, bytes);
+    p.end();
+
+    if (channel > 125 || !count || !width || width > 32) {
+        displayWarning("No compatible saved packet", true);
+        return;
+    }
+    if (!nrf_start(NRF_MODE_SPI)) {
+        displayError("NRF24 not found", true);
+        return;
+    }
+
+    // Replay is intentionally limited to the learner's own fixed address/profile.
+    // It does not attempt to defeat pairing, hopping, rolling codes or other protections.
+    static const uint8_t learnAddr[5] = {'R','C','L','R','N'};
+    NRFradio.stopListening();
+    NRFradio.setChannel(channel);
+    NRFradio.setDataRate((rf24_datarate_e)rateRaw);
+    NRFradio.setAutoAck(false);
+    NRFradio.disableCRC();
+    NRFradio.setAddressWidth(5);
+    NRFradio.setPayloadSize(width);
+    NRFradio.openWritingPipe(learnAddr);
+
+    uint8_t sent = 0;
+    for (uint8_t i = 0; i < count; ++i) {
+        if (NRFradio.write(packets + ((size_t)i * width), width)) sent++;
+        delay(12);
+    }
+    NRFradio.powerDown();
+    displaySuccess("Replay test: " + String(sent) + "/" + String(count) + " sent", true);
+}
+
+void nrf_rc_saved() {
+    std::vector<Option> opts = {
+        {"Show saved channels", showSavedChannels},
+        {"Test Replay", replaySavedPacket},
+    };
+    loopOptions(opts, MENU_TYPE_SUBMENU, "NRF24 Saved RC");
+}
