@@ -112,7 +112,7 @@ void nrf_rc_learn() {
         }
     }
 
-    saveProfile(foundChannel, foundRate, packets, count, width);
+    saveProfile(best, foundRate, packets, count, width);
     NRFradio.powerDown();
 
     if (!count) {
