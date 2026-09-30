@@ -9,6 +9,7 @@ void UniversalRemoteMenu::optionsMenu() {
     options.clear();
     options.push_back({"Nanoleaf", nanoleafMenu});
     options.push_back({"NRF24 RC Learn+", nrf_rc_learn});
+    options.push_back({"NRF24 Saved RC", nrf_rc_saved});
     options.push_back({"OTA Update", universalRemoteOta});
     options.push_back({"Xiaomi TV / Joyn", []() {
         displayInfo("TV/Joyn module is next", true);
