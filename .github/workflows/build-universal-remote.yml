@@ -1,0 +1,28 @@
+name: Build Universal Remote
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ universal-remote ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PlatformIO
+        run: pip install platformio
+      - name: Build LILYGO T-Embed CC1101
+        run: pio run -e lilygo-t-embed-cc1101
+      - name: Collect firmware
+        run: |
+          mkdir -p artifact
+          find .pio/build/lilygo-t-embed-cc1101 -maxdepth 1 -type f \( -name '*.bin' -o -name '*.elf' \) -exec cp {} artifact/ \;
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bruce-Universal-Remote-LILYGO-T-Embed-CC1101
+          path: artifact/
+          if-no-files-found: error
