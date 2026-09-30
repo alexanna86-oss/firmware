@@ -56,18 +56,18 @@ void nrf_rc_learn() {
         return;
     }
 
-    displayInfo("RC Learn: activity scan...");
+    displayInfo("RC Learn+: press RC button during scan");
     NRFradio.setAutoAck(false);
     NRFradio.disableCRC();
     NRFradio.setDataRate(RF24_1MBPS);
 
     uint16_t hits[126] = {0};
-    const uint8_t passes = 32;
+    const uint8_t passes = 64;
     for (uint8_t pass = 0; pass < passes && !check(EscPress); ++pass) {
         for (uint8_t ch = 0; ch < 126; ++ch) {
             NRFradio.setChannel(ch);
             NRFradio.startListening();
-            delayMicroseconds(180);
+            delayMicroseconds(220);
             NRFradio.stopListening();
             if (NRFradio.testRPD()) hits[ch]++;
         }
@@ -112,7 +112,7 @@ void nrf_rc_learn() {
         }
     }
 
-    saveProfile(best, foundRate, packets, count, width);
+    saveProfile(foundChannel, foundRate, packets, count, width);
     NRFradio.powerDown();
 
     if (!count) {
