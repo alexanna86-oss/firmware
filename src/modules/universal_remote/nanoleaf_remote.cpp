@@ -6,6 +6,7 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <ESPmDNS.h>
+#include <WiFiClient.h>
 
 static String nlIp;
 static String nlToken;
@@ -73,14 +74,37 @@ static bool discoverNanoleaf() {
         return false;
     }
     int n = MDNS.queryService("nanoleafapi", "tcp");
-    if (n <= 0) {
-        displayWarning("No Nanoleaf found", true);
-        return false;
+    if (n > 0) {
+        nlIp = MDNS.address(0).toString();
+        saveNanoleaf();
+        displaySuccess("Found mDNS: " + nlIp, true);
+        return true;
     }
-    nlIp = MDNS.address(0).toString();
-    saveNanoleaf();
-    displaySuccess("Found: " + nlIp, true);
-    return true;
+
+    // Fallback: Nanoleaf discovery is not always advertised reliably via mDNS.
+    // Probe the local /24 for the documented local API port 16021.
+    IPAddress local = WiFi.localIP();
+    displayInfo("mDNS none - scan LAN...");
+    for (int host = 1; host <= 254; ++host) {
+        if (host == local[3]) continue;
+        IPAddress candidate(local[0], local[1], local[2], host);
+        WiFiClient client;
+        if (client.connect(candidate, 16021, 80)) {
+            client.stop();
+            nlIp = candidate.toString();
+            saveNanoleaf();
+            displaySuccess("Found LAN: " + nlIp, true);
+            return true;
+        }
+        client.stop();
+        if ((host & 15) == 0) {
+            displayInfo("LAN scan " + String(host) + "/254");
+            if (check(EscPress)) return false;
+        }
+        delay(1);
+    }
+    displayWarning("No Nanoleaf found", true);
+    return false;
 }
 
 static void pairNanoleaf() {
