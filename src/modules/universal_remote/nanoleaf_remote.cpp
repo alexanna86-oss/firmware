@@ -77,7 +77,7 @@ static bool discoverNanoleaf() {
         displayWarning("No Nanoleaf found", true);
         return false;
     }
-    nlIp = MDNS.IP(0).toString();
+    nlIp = MDNS.address(0).toString();
     saveNanoleaf();
     displaySuccess("Found: " + nlIp, true);
     return true;
