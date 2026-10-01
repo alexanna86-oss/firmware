@@ -5,6 +5,7 @@
 #include <HTTPClient.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 
 static String nlIp;
 static String nlToken;
@@ -60,6 +61,67 @@ static bool nlPut(const String &endpoint, const String &json) {
     return false;
 }
 
+
+static bool discoverNanoleaf() {
+    if (!ensureWifi()) {
+        displayError("WiFi not connected", true);
+        return false;
+    }
+    displayInfo("Searching Nanoleaf...");
+    if (!MDNS.begin("bruce-nanoleaf")) {
+        displayError("mDNS start failed", true);
+        return false;
+    }
+    int n = MDNS.queryService("nanoleafapi", "tcp");
+    if (n <= 0) {
+        displayWarning("No Nanoleaf found", true);
+        return false;
+    }
+    nlIp = MDNS.IP(0).toString();
+    saveNanoleaf();
+    displaySuccess("Found: " + nlIp, true);
+    return true;
+}
+
+static void pairNanoleaf() {
+    loadNanoleaf();
+    if (nlIp.isEmpty() && !discoverNanoleaf()) return;
+    if (!ensureWifi()) return;
+
+    displayInfo("Hold Nanoleaf power 5-7 sec\nthen press OK");
+    while (!check(SelPress)) {
+        if (check(EscPress)) return;
+        delay(20);
+    }
+
+    HTTPClient http;
+    String url = "http://" + nlIp + ":16021/api/v1/new";
+    if (!http.begin(url)) {
+        displayError("Nanoleaf HTTP init failed", true);
+        return;
+    }
+    http.addHeader("Content-Type", "application/json");
+    int code = http.POST("{}");
+    String body = http.getString();
+    http.end();
+    if (code < 200 || code >= 300) {
+        displayError("Pair failed HTTP " + String(code), true);
+        return;
+    }
+
+    int key = body.indexOf("\"auth_token\"");
+    int colon = key >= 0 ? body.indexOf(':', key) : -1;
+    int q1 = colon >= 0 ? body.indexOf('"', colon) : -1;
+    int q2 = q1 >= 0 ? body.indexOf('"', q1 + 1) : -1;
+    if (q1 < 0 || q2 <= q1) {
+        displayError("Token not found", true);
+        return;
+    }
+    nlToken = body.substring(q1 + 1, q2);
+    saveNanoleaf();
+    displaySuccess("Nanoleaf paired + saved", true);
+}
+
 static void setupNanoleaf() {
     loadNanoleaf();
     String ip = keyboard(nlIp, 64, "Nanoleaf IP:");
@@ -97,6 +159,8 @@ static void setEffect() {
 void nanoleafMenu() {
     loadNanoleaf();
     std::vector<Option> opts = {
+        {"Auto Find", []() { discoverNanoleaf(); }},
+        {"Auto Pair + Save", pairNanoleaf},
         {"Power ON", []() { nlPut("state", "{\"on\":{\"value\":true}}"); }},
         {"Power OFF", []() { nlPut("state", "{\"on\":{\"value\":false}}"); }},
         {"Brightness 25%", []() { setBrightness(25); }},
