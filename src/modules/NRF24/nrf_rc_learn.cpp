@@ -62,15 +62,21 @@ void nrf_rc_learn() {
     NRFradio.setDataRate(RF24_1MBPS);
 
     uint16_t hits[126] = {0};
-    const uint8_t passes = 64;
+    // RPD only goes high above roughly -64 dBm. Use a longer dwell and several
+    // samples per channel so short RC bursts are less likely to be missed.
+    const uint8_t passes = 48;
     for (uint8_t pass = 0; pass < passes && !check(EscPress); ++pass) {
         for (uint8_t ch = 0; ch < 126; ++ch) {
             NRFradio.setChannel(ch);
-            NRFradio.startListening();
-            delayMicroseconds(220);
-            NRFradio.stopListening();
-            if (NRFradio.testRPD()) hits[ch]++;
+            for (uint8_t sample = 0; sample < 3; ++sample) {
+                NRFradio.startListening();
+                delayMicroseconds(500);
+                if (NRFradio.testRPD()) hits[ch]++;
+                NRFradio.stopListening();
+                delayMicroseconds(40);
+            }
         }
+        if ((pass & 7) == 0) displayInfo("NRF scan " + String(pass + 1) + "/" + String(passes));
     }
 
     uint8_t best = 0;
@@ -100,15 +106,28 @@ void nrf_rc_learn() {
     uint8_t count = 0, width = 0;
     rf24_datarate_e foundRate = RF24_1MBPS;
 
-    // Try the strongest activity channel at all nRF24 data rates.
-    // Packet capture only succeeds for traffic compatible with the configured address.
-    for (uint8_t i = 0; i < 3 && count == 0; ++i) {
-        displayInfo("Listen CH " + String(best) + " " + rateNames[i] + "...");
-        uint8_t n = 0, w = 0;
-        if (captureOn(best, rates[i], packets, n, w)) {
-            count = n;
-            width = w;
-            foundRate = rates[i];
+    // Try up to the six strongest active channels at all nRF24 data rates.
+    // This helps frequency-hopping RC transmitters, while packet decoding still
+    // remains limited to compatible nRF24 traffic/addressing.
+    uint8_t tried[6] = {0};
+    uint8_t tryCount = 0;
+    uint16_t workHits[126];
+    memcpy(workHits, hits, sizeof(hits));
+    while (tryCount < 6 && count == 0) {
+        uint8_t ch = 0;
+        for (uint8_t j = 1; j < 126; ++j) if (workHits[j] > workHits[ch]) ch = j;
+        if (workHits[ch] == 0 && tryCount > 0) break;
+        tried[tryCount++] = ch;
+        workHits[ch] = 0;
+        for (uint8_t i = 0; i < 3 && count == 0; ++i) {
+            displayInfo("Listen CH " + String(ch) + " " + rateNames[i] + "...");
+            uint8_t n = 0, w = 0;
+            if (captureOn(ch, rates[i], packets, n, w)) {
+                count = n;
+                width = w;
+                foundRate = rates[i];
+                best = ch;
+            }
         }
     }
 
