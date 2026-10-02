@@ -12,6 +12,23 @@
 #include "modules/ir/ir_favorites.h"
 #include "modules/universal_remote/all_off.h"
 #include "modules/universal_remote/radio_help.h"
+#include "modules/ble/ble_common.h"
+#include "modules/ble/ble_spam.h"
+
+static void bluetoothMenu() {
+    remoteMenu({
+        {"Bluetooth EIN", []() {
+            if (ble_scan_setup()) displaySuccess("Bluetooth ist EIN", true);
+            else displayError("Bluetooth konnte nicht gestartet werden", true);
+        }},
+        {"Bluetooth AUS", []() {
+            stopBLEStack();
+            displaySuccess("Bluetooth ist AUS", true);
+        }},
+        {"Geraete suchen", ble_scan},
+        {"BLE Spam (manueller Test)", spamMenu},
+    }, "Bluetooth");
+}
 
 static void tvMenu() {
     remoteMenu({
@@ -33,6 +50,7 @@ void UniversalRemoteMenu::optionsMenu() {
         {"Fernseher", tvMenu},
         {"Licht / Nanoleaf", nanoleafMenu},
         {"Funk / RC", remoteRadioMenu},
+        {"Bluetooth", bluetoothMenu},
         {"Firmware aktualisieren", universalRemoteOta},
     };
     remoteMenu(options, "Universal Remote");
