@@ -211,3 +211,4 @@ void nanoleafMenu() {
     };
     remoteMenu(opts, "Nanoleaf");
 }
+bool nanoleafPowerOff() { return nlPut("state", "{\"on\":{\"value\":false}}"); }

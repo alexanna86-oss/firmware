@@ -43,7 +43,15 @@ public:
     int peek() override { return -1; }
     void flush() override {}
 };
-static bool requestPi(const String &route, String &body) {
+static void loadPiHost() {
+    Preferences p;
+    if (p.begin("pi-remote", true)) {
+        String saved = p.getString("host", piHost); p.end();
+        if (validHost(saved)) piHost = saved;
+    }
+}
+static bool requestPi(const String &route, String &body, bool post = false) {
+    loadPiHost();
     if (!WiFi.isConnected()) wifiConnectMenu(WIFI_STA);
     if (!WiFi.isConnected()) return false;
     displayInfo("Pi: " + route + "\nWaiting for server...");
@@ -57,7 +65,7 @@ static bool requestPi(const String &route, String &body) {
         displayError("Cannot start Pi request", true); return false;
     }
     // Never retry automatically: volume/mute and app launches are not idempotent.
-    int code = http.GET();
+    int code = post ? http.POST("") : http.GET();
     if (code < 200 || code >= 300) {
         http.end();
         displayError(code == 404 ? "Pi route missing: " + route : "Pi HTTP " + String(code), true);
@@ -77,6 +85,34 @@ static bool requestPi(const String &route, String &body) {
 static void command(const char *route) {
     String body;
     if (requestPi(route, body)) displaySuccess("Pi accepted command", true);
+}
+static bool extendedCommand(const char *key) {
+    String body;
+    if (!requestPi("/remote/capabilities", body)) return false;
+    JsonDocument doc;
+    if (deserializeJson(doc, body) || doc["version"].as<int>() != 1 || !doc["keys"].is<JsonArray>()) {
+        displayError("Pi-Erweiterung nicht passend", true); return false;
+    }
+    bool supported = false;
+    for (JsonVariant value : doc["keys"].as<JsonArray>()) if (value.as<String>() == key) supported = true;
+    if (!supported) { displayError("Pi unterstuetzt Taste nicht", true); return false; }
+    if (!requestPi(String("/remote/key/") + key, body, true)) return false;
+    doc.clear();
+    if (deserializeJson(doc, body) || !doc["ok"].is<bool>() || !doc["ok"].as<bool>()) {
+        displayError("Pi bestaetigt Befehl nicht", true); return false;
+    }
+    return true;
+}
+bool piPowerOff() { return extendedCommand("off"); }
+static void navigationMenu() {
+    std::vector<Option> opts;
+    const char *keys[] = {"up", "down", "left", "right", "ok", "off"};
+    const char *labels[] = {"Hoch", "Runter", "Links", "Rechts", "OK", "TV ausschalten"};
+    for (size_t i = 0; i < 6; ++i) {
+        const char *key = keys[i];
+        opts.push_back({labels[i], [key]() { if (extendedCommand(key)) displaySuccess("Pi-Befehl gesendet", true); }});
+    }
+    remoteMenu(opts, "Pi-Erweiterung erforderlich");
 }
 static void channels() {
     String body;
@@ -99,6 +135,7 @@ void piRemoteMenu() {
         if (validHost(saved)) piHost = saved;
     }
     std::vector<Option> opts = {
+        {"Navigation / AUS (Pi-Addon)", navigationMenu},
         {"Pi address / setup", configurePi},
         {"Show Pi address", []() { displayInfo(piHost + ":5050\nRaspberry Pi, not TV IP", true); }},
         {"TV channels", channels},

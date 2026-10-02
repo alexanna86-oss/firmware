@@ -4,6 +4,41 @@ Target: `pio run -e lilygo-t-embed-cc1101`, branch `universal-remote`.
 The existing board source filter includes the remote modules and main-menu entry.
 IR, CC1101, Wi-Fi and the other existing Bruce modules remain included.
 
+## Simplified remote menu
+
+The six top-level choices are Favorites, All off, TV, Lights, Radio and Firmware
+update (German labels on the device). Advanced IR functions remain under TV.
+Radio separates nRF24/2.4 GHz from CC1101/Sub-GHz, with diagnostics before capture.
+
+## Favorites and All off
+
+`Fernseher > TV-Code finden und merken` tests one TV database code at a time.
+After the TV reacts, choose `TV reagiert: merken` and a storage slot. The existing
+automatic all-brand sweep is still available separately. Saved sweep codes are
+always power toggles/general favorites, never implicitly discrete OFF commands.
+
+`Favoriten / Meine IR-Tasten` stores up to eight named raw IR buttons in Preferences,
+with carrier, bounded timings, version and checksum; writes are read back. The
+list refreshes after learning/deleting. Normal buttons and dedicated OFF buttons
+can be learned from a physical IR remote. Carrier is selected manually; default
+38 kHz. At most 512 timings and three seconds per frame are accepted. Truncated
+captures and failed writes are reported. Existing `.ir` files are untouched.
+
+`Alles aus` has a persistent, initially empty selection: configured Nanoleaf,
+Xiaomi via the optional Pi extension, and explicitly learned IR OFF buttons.
+General power favorites are excluded, avoiding accidental wake-ups from known
+toggle records. The user must only learn an actual discrete OFF button in the
+OFF learning flow. Results distinguish network failure from accepted commands;
+IR only reports transmitted commands, not receiver state. No nearby Wi-Fi or
+Bluetooth devices are discovered or disrupted by this action.
+
+The optional `pi/remote_routes.py` adds capability discovery and POST-only arrow,
+OK and sleep commands to the existing Flask server. See `pi/README-DE.md`.
+The firmware verifies capabilities before sending a new command. Sleep uses
+Android keycode 223, never power toggle 26. This server extension is supplied and
+unit-tested but **not installed on the user's Pi by this build**. Existing routes
+and TV functions continue to work without it.
+
 ## Installation and OTA migration
 
 The previous `custom_16Mb.csv` has only a factory application and cannot perform
@@ -50,6 +85,10 @@ T-Embed's built-in CC1101 is a different radio. Keep the existing wiring/pin set
   dwell. The RPD indicator is an above-threshold activity count, not RSSI in dBm
   or evidence of a decodable remote. Results sort by activity, including channel
   125. Saved RC reloads the complete map without needing the radio.
+- `Laenger suchen` takes 576 samples per channel; operate the original transmitter
+  repeatedly during the scan. It increases observation time, not receiver sensitivity.
+  `Modul und Pins testen` shows configured pins, checks SPI identity and channel
+  register readback at 0/62/125. Passing does not prove antenna or RF-path performance.
 - A complete versioned record with checksum is written and verified. Cancelled
   scans leave the previous record intact. A silent scan is still a valid saved
   result. Legacy complete `scanHits` maps remain readable.
@@ -65,6 +104,16 @@ T-Embed's built-in CC1101 is a different radio. Keep the existing wiring/pin set
   pairing, hopping, encryption or rolling codes. Timing-dependent devices may
   require a dedicated protocol implementation. Old captures made with the former
   hard-coded profile must be captured again; their incomplete metadata is not replayed.
+
+## CC1101 reception assistance
+
+`Funk / RC > CC1101` offers 30-second live RSSI tests at 315, 433.92, 868.35 and
+915 MHz, with current/min/max level and Back cancellation. These are passive
+receive tests using the existing board-specific RF initialization and antenna
+switching; they do not change the stored RF frequency. Existing scan/copy,
+spectrum and RAW recording remain accessible. RSSI is not device identity or
+successful decoding. CC1101 cannot receive 2.4-GHz mini RC cars: its bands are
+300–348, 387–464 and 779–928 MHz. No REELY S8890 protocol is claimed.
 
 ## Xiaomi TV through the existing Raspberry Pi
 

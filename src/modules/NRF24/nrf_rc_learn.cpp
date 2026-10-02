@@ -40,6 +40,25 @@ static bool startRadio() {
     return true;
 }
 static void stopRadio() { NRFradio.stopListening(); NRFradio.powerDown(); }
+void nrf_rc_diagnostics() {
+    auto &bus = bruceConfigPins.NRF24_bus;
+    displayInfo("nRF24 Pins\nCE " + String(bus.io0) + " CS " + String(bus.cs) +
+                "\nSCK " + String(bus.sck) + " MISO " + String(bus.miso) +
+                " MOSI " + String(bus.mosi), true);
+    if (!startRadio()) {
+        displayInfo("Externes nRF24 erforderlich\n3.3V, GND und SPI pruefen\nCC1101 ist kein nRF24", true);
+        return;
+    }
+    bool ok = NRFradio.isChipConnected();
+    for (uint8_t channel : {0, 62, 125}) {
+        NRFradio.setChannel(channel);
+        ok = ok && NRFradio.getChannel() == channel;
+    }
+    bool plus = NRFradio.isPVariant();
+    stopRadio();
+    displayInfo(ok ? String("SPI-Kanaltest OK\n") + (plus ? "nRF24L01+ erkannt" : "nRF24 erkannt") +
+                      "\nKein Test der Antenne!" : "SPI-Test fehlgeschlagen\nPins / Stromversorgung pruefen", true);
+}
 static void showScan(const Scan &s) {
     uint8_t channels[126];
     rank(s, channels);
@@ -55,14 +74,14 @@ static void showScan(const Scan &s) {
     }
     remoteMenu(opts, "Activity: strongest first");
 }
-void nrf_rc_learn() {
+static void scanActivity(uint16_t passes) {
     if (!startRadio()) return;
     NRFradio.disableCRC();
     NRFradio.setDataRate(RF24_1MBPS);
     Scan s;
-    constexpr uint8_t passes = 48, samplesPerPass = 3;
-    displayInfo("Activity scan: CH 0-125\nESC cancels without saving");
-    for (uint8_t pass = 0; pass < passes; ++pass) {
+    constexpr uint8_t samplesPerPass = 3;
+    displayInfo("Sender-Taste gedrueckt halten\nAlle Kanaele 0-125\nESC: alte Messung bleibt", true);
+    for (uint16_t pass = 0; pass < passes; ++pass) {
         for (uint8_t ch = 0; ch < 126; ++ch) {
             if (check(EscPress)) { stopRadio(); return; }
             NRFradio.setChannel(ch);
@@ -76,12 +95,15 @@ void nrf_rc_learn() {
             if ((ch & 7) == 0) delay(1);
         }
         s.samples += samplesPerPass;
-        if ((pass & 3) == 0) displayInfo("Activity scan " + String(pass + 1) + "/48");
+        if ((pass & 3) == 0) displayInfo("Funk suchen " + String(pass + 1) + "/" + String(passes) +
+                                       "\nSender mehrfach betaetigen\nESC bricht ab");
     }
     stopRadio();
     if (!saveRecord("scanV1", s)) { displayError("Scan save failed", true); return; }
     showScan(s);
 }
+void nrf_rc_learn() { scanActivity(48); }
+void nrf_rc_long_scan() { scanActivity(192); }
 static bool applyProfile(const Packet &p) {
     if (!settingsValid(p)) return false;
     NRFradio.setChannel(p.channel);

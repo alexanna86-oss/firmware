@@ -2,9 +2,10 @@
 #include "tv_power_decode.h"
 #include "ir_utils.h"
 #include "core/display.h"
+#include "ir_favorites.h"
 #include <algorithm>
 
-void startAllTvPower() {
+static void runTvPower(bool findMode) {
     if (!init_ir_tx_mutex()) { displayError("IR busy", true); return; }
     checkIrTxPin();
     if (returnToMenu) return;
@@ -20,6 +21,7 @@ void startAllTvPower() {
     codes.insert(codes.end(), NApowerCodes, NApowerCodes + num_NAcodes);
     std::vector<uint64_t> sent;
     bool cancelled = false;
+    bool remembered = false;
     check(SelPress); // consume the menu selection, never require a second start
     for (size_t i = 0; i < codes.size(); ++i) {
         if (check(EscPress) || returnToMenu) { cancelled = true; break; }
@@ -33,6 +35,23 @@ void startAllTvPower() {
         sender.sendRaw(raw.data(), raw.size(), codes[i]->timer_val);
         unlock_ir_tx();
         sent.push_back(key);
+        if (findMode) {
+            bool next = false;
+            while (!next && !cancelled) {
+                std::vector<Option> choices = {
+                    {"TV reagiert: merken", [&]() {
+                        remembered = saveIrFavorite(raw.data(), raw.size(), uint16_t(codes[i]->timer_val) * 1000, "TV Power");
+                        cancelled = remembered;
+                    }},
+                    {"Naechster Code", [&]() { next = true; }},
+                    {"Diesen wiederholen", [&]() { sender.sendRaw(raw.data(), raw.size(), codes[i]->timer_val); }},
+                    {"Abbrechen", [&]() { cancelled = true; }},
+                };
+                if (loopOptions(choices, MENU_TYPE_SUBMENU, "Hat der TV reagiert?") < 0 || returnToMenu)
+                    cancelled = true;
+            }
+            if (cancelled) break;
+        }
         // Allow the TV to process the frame and keep Back responsive between codes.
         uint32_t start = millis();
         while (millis() - start < 205) {
@@ -45,6 +64,10 @@ void startAllTvPower() {
 #ifdef USE_BOOST
     PPM.disableOTG();
 #endif
+    if (remembered) { displaySuccess("TV-Taste unter Favoriten", true); return; }
     displayInfo((cancelled ? "Gestoppt: " : "Fertig: ") + String(sent.size()) +
                 " TV-Codes\nPower kann ein/aus umschalten\nKeine TV-Rueckmeldung", true);
 }
+
+void startAllTvPower() { runTvPower(false); }
+void findTvPower() { runTvPower(true); }

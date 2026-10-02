@@ -9,20 +9,32 @@
 #include "modules/ir/ir_read.h"
 #include "modules/ir/custom_ir.h"
 #include "modules/ir/TV-B-Gone.h"
+#include "modules/ir/ir_favorites.h"
+#include "modules/universal_remote/all_off.h"
+#include "modules/universal_remote/radio_help.h"
+
+static void tvMenu() {
+    remoteMenu({
+        {"Alle TV-Powercodes senden", startAllTvPower},
+        {"TV-Code finden und merken", findTvPower},
+        {"Meine IR-Tasten", irFavoritesMenu},
+        {"Xiaomi per WLAN / Pi", piRemoteMenu},
+        {"Weitere IR-Funktionen", []() {
+            remoteMenu({{"Fernbedienung anlernen", []() { IrRead(); }}, {"RAW anlernen", irRawLearnMenu},
+                        {"IR-Dateien oeffnen", otherIRcodes}, {"TV-Codes nach Region", StartTvBGone}}, "IR erweitert");
+        }},
+    }, "Fernseher");
+}
 
 void UniversalRemoteMenu::optionsMenu() {
-    std::vector<Option> options;
-    options.push_back({"Alle TVs: Power", startAllTvPower});
-    options.push_back({"Nanoleaf", nanoleafMenu});
-    options.push_back({"Xiaomi TV (Pi WiFi)", piRemoteMenu});
-    options.push_back({"IR Learn", []() { IrRead(); }});
-    options.push_back({"IR RAW Learn", irRawLearnMenu});
-    options.push_back({"Saved IR remotes", otherIRcodes});
-    options.push_back({"IR TV power codes", StartTvBGone});
-    options.push_back({"NRF24 Activity Scan", nrf_rc_learn});
-    options.push_back({"NRF24 Known Device", nrf_rc_capture});
-    options.push_back({"NRF24 Saved RC", nrf_rc_saved});
-    options.push_back({"OTA Update", universalRemoteOta});
+    std::vector<Option> options = {
+        {"Favoriten / Meine IR-Tasten", irFavoritesMenu},
+        {"Alles aus", allOffMenu},
+        {"Fernseher", tvMenu},
+        {"Licht / Nanoleaf", nanoleafMenu},
+        {"Funk / RC", remoteRadioMenu},
+        {"Firmware aktualisieren", universalRemoteOta},
+    };
     remoteMenu(options, "Universal Remote");
 }
 
