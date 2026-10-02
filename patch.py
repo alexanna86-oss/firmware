@@ -18,45 +18,45 @@ board_mcu = env.BoardConfig()
 mcu = board_mcu.get("build.mcu", "")
 patchflag_path = join(FRAMEWORK_DIR,mcu, "lib", ".patched")
 
-# patch file only if we didn't do it befored
-if not isfile(join(FRAMEWORK_DIR,mcu, "lib", ".patched")):
-    original_file = join(FRAMEWORK_DIR,mcu, "lib", "libnet80211.a")
-    patched_file = join(
-        FRAMEWORK_DIR, mcu, "lib", "libnet80211.a.patched"
-    )
+# Only replace the framework archive after objcopy has succeeded. Older versions
+# renamed the original even on failure and left a false .patched marker behind.
+if mcu != "esp32p4":
+    import os
+    import shutil
+    import subprocess
 
-    if mcu=="esp32c5" or mcu=="esp32c6" :
-        env.Execute(
-            "pio pkg exec -p toolchain-riscv32-esp -- riscv32-esp-elf-objcopy  --weaken-symbol=ieee80211_raw_frame_sanity_check %s %s"
-            % (original_file, patched_file)
-        )
-    elif mcu=="esp32p4":
-        """Do nothing"""
-    else:
-        env.Execute(
-            "pio pkg exec -p toolchain-xtensa-%s -- xtensa-%s-elf-objcopy  --weaken-symbol=ieee80211_raw_frame_sanity_check %s %s"
-            % (mcu, mcu, original_file, patched_file)
-        )
-
-    if isfile("%s.old" % (original_file)):
-        remove("%s.old" % (original_file))
-
-    if isfile(original_file):
-        rename(original_file, "%s.old" % (original_file))
-    else:
-        print("Patch: Original file not found")
-
-    if isfile(patched_file):
-        rename(patched_file, original_file)
-    else:
-        print("Patch: Patched file not found")
-
-
-    def _touch(path):
-        with open(path, "w") as fp:
-            fp.write("")
-
-    env.Execute(lambda *args, **kwargs: _touch(patchflag_path))
+    original_file = join(FRAMEWORK_DIR, mcu, "lib", "libnet80211.a")
+    backup_file = original_file + ".old"
+    patched_file = original_file + ".patched"
+    if not isfile(patchflag_path) or not isfile(original_file):
+        source_file = original_file if isfile(original_file) else backup_file
+        family = "riscv32" if mcu in ("esp32c5", "esp32c6") else "xtensa"
+        candidates = [("toolchain-" + family + "-esp-elf", family + "-esp-elf-objcopy")]
+        if family == "xtensa":
+            candidates.append(("toolchain-xtensa-" + mcu, "xtensa-" + mcu + "-elf-objcopy"))
+        else:
+            candidates.append(("toolchain-riscv32-esp", "riscv32-esp-elf-objcopy"))
+        objcopy = None
+        for package, executable in candidates:
+            package_dir = env.PioPlatform().get_package_dir(package)
+            if package_dir:
+                candidate = join(package_dir, "bin", executable + (".exe" if os.name == "nt" else ""))
+                if isfile(candidate):
+                    objcopy = candidate
+                    break
+        if not objcopy or not isfile(source_file):
+            print("Patch: required objcopy or original WLAN archive is missing; archive left unchanged")
+            env.Exit(1)
+        result = subprocess.run([objcopy, "--weaken-symbol=ieee80211_raw_frame_sanity_check",
+                                 source_file, patched_file], check=False)
+        if result.returncode != 0 or not isfile(patched_file):
+            print("Patch: objcopy failed; original WLAN archive left unchanged")
+            env.Exit(1)
+        if isfile(original_file) and not isfile(backup_file):
+            shutil.copy2(original_file, backup_file)
+        os.replace(patched_file, original_file)
+        with open(patchflag_path, "w") as fp:
+            fp.write("checked-objcopy\n")
 
 
 def hash_file(file_path):

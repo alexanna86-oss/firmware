@@ -22,6 +22,7 @@ jobs:
         run: |
           g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tests/remote/profile_test.cpp -o /tmp/remote-profile-test
           /tmp/remote-profile-test
+          python -m unittest discover -s tests/remote -p 'test_*.py'
       - name: Build LILYGO T-Embed CC1101
         run: pio run -e lilygo-t-embed-cc1101
       - name: Collect firmware
