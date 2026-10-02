@@ -11,7 +11,9 @@ void NRF24Menu::optionsMenu() {
     options.clear();
     options.push_back({"Information", nrf_info});
     options.push_back({"Spectrum", nrf_spectrum});
-    options.push_back({"RC Learn (Activity)", nrf_rc_learn});
+    options.push_back({"Activity Scan", nrf_rc_learn});
+    options.push_back({"Known Device", nrf_rc_capture});
+    options.push_back({"Saved RC", nrf_rc_saved});
     #if !defined(LITE_VERSION)
     options.push_back({"MouseJack", nrf_mousejack});
     #endif

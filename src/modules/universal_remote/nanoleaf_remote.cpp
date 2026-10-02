@@ -99,8 +99,9 @@ static bool discoverNanoleaf() {
     displayInfo("Searching Nanoleaf mDNS...");
     std::vector<Candidate> found;
     // Reuse a running responder. A failed mDNS start must not prevent the LAN fallback.
-    int n = MDNS.queryService("nanoleafapi", "tcp");
-    if (!n && MDNS.begin("bruce-nanoleaf")) n = MDNS.queryService("nanoleafapi", "tcp");
+    char hostname[MDNS_NAME_BUF_LEN] = {};
+    bool mdnsReady = mdns_hostname_get(hostname) == ESP_OK || MDNS.begin("bruce-nanoleaf");
+    int n = mdnsReady ? MDNS.queryService("nanoleafapi", "tcp") : 0;
     for (int i = 0; i < n && found.size() < 16; ++i) {
         String ip = MDNS.address(i).toString();
         if (!validIp(ip) || !MDNS.port(i)) continue;

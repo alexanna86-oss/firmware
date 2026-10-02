@@ -98,15 +98,20 @@ def _merge_bins_callback(target, source, env):
             print("[merge_bin] Error: firmware.bin exceeds OTA partition size")
             env.Exit(1)
 
+    images = [hex(boot_offset), q(boot_bin), hex(PART_TABLE_OFFSET), q(part_bin)]
+    if pioenv == "lilygo-t-embed-cc1101":
+        # Keep the Bruce image consistent with PlatformIO's factory image,
+        # including the board-specific OTA selector rather than retaining an old slot.
+        images = []
+        for offset, path in env.get("FLASH_EXTRA_IMAGES", []):
+            images.extend([str(offset), q(env.subst(path))])
+    images.extend([hex(APP_OFFSET), q(app_bin)])
     cmd = " ".join([
         q(python_exe), "-m", "platformio", "pkg", "exec", "-p", q("tool-esptoolpy"), "--", "esptool.py",
         "--chip", chip_arg,
         "merge-bin",
         "--output", q(out_bin),
-        hex(boot_offset), q(boot_bin),
-        hex(PART_TABLE_OFFSET), q(part_bin),
-        hex(APP_OFFSET), q(app_bin),
-    ])
+    ] + images)
 
     print("[merge_bin] Merging binaries:")
     print(" ", cmd)
@@ -120,7 +125,7 @@ def _merge_bins_callback(target, source, env):
         except FileNotFoundError:
             size = 0
         print(f"[merge_bin] Success -> {out_bin} ({size} bytes)")
-        if ota0_offset:
+        if ota0_offset and pioenv != "lilygo-t-embed-cc1101":
             if size < (ota0_offset + ota_size):
                 print("[Final bin] Valid bin to upload")
             else:
