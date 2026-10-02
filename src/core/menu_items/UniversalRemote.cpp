@@ -12,6 +12,7 @@
 
 void UniversalRemoteMenu::optionsMenu() {
     std::vector<Option> options;
+    options.push_back({"Alle TVs: Power", startAllTvPower});
     options.push_back({"Nanoleaf", nanoleafMenu});
     options.push_back({"Xiaomi TV (Pi WiFi)", piRemoteMenu});
     options.push_back({"IR Learn", []() { IrRead(); }});

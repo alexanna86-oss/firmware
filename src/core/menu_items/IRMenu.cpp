@@ -13,6 +13,7 @@ void IRMenu::optionsMenu() {
     M5.Power.setExtOutput(true); // ENABLE 5V OUTPUT
 #endif
     options = {
+        {"Alle TVs: Power", startAllTvPower    },
         {"TV-B-Gone", StartTvBGone              },
         {"Custom IR", otherIRcodes              },
         {"IR Read",   [=]() { IrRead(); }       },

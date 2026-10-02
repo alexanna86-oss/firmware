@@ -90,6 +90,16 @@ Bluetooth power-off implementation. Neither is advertised as working.
 
 ## Infrared learning and power codes
 
+`Alle TVs: Power` is a direct start in both Universal Remote and Infrared. It
+automatically sends the existing EU and NA TV power databases once, without
+learning or region selection. Identical carrier/timing sequences are skipped
+using a 64-bit fingerprint. Back/ESC cancels between codes or during the 205 ms
+inter-code pause. Long timings are split without losing mark/space polarity.
+This path uses only the established TV lists, not the mixed fan/projector/menu
+entries in the additional universal list. It provides no receiver feedback and
+cannot guarantee that every brand reacts or that the final state is on or off:
+many TV codes toggle power, and different matching codes may toggle a TV again.
+
 The Universal Remote menu now links to IR learning, saved IR remotes and the
 existing TV-B-Gone power-code selection. These codes cannot cover every TV and
 some power codes toggle power instead of guaranteeing off.

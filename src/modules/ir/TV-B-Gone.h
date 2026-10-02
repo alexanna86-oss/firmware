@@ -83,6 +83,7 @@ void quickflashLEDx(uint8_t x);
 void delay_ten_us(uint16_t us);
 void quickflashLED(void);
 void StartTvBGone();
+void startAllTvPower();
 void checkIrTxPin();
 bool init_ir_tx_mutex();
 void lock_ir_tx();
