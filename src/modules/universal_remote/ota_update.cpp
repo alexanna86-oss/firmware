@@ -5,8 +5,13 @@
 #include <WebServer.h>
 #include <Update.h>
 #include <WiFi.h>
+#include <esp_ota_ops.h>
 
 void universalRemoteOta() {
+    if (!esp_ota_get_next_update_partition(nullptr)) {
+        displayError("No OTA slot: USB factory flash needed", true);
+        return;
+    }
     if (!WiFi.isConnected()) {
         if (!wifiConnectMenu(WIFI_STA)) {
             displayError("WiFi connection failed", true);
@@ -16,6 +21,7 @@ void universalRemoteOta() {
 
     WebServer otaServer(8080);
     bool restartPending = false;
+    bool uploadStarted = false, uploadComplete = false, uploadFailed = false;
     const char *page =
         "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'>"
         "<title>Bruce Universal Remote OTA</title></head><body>"
@@ -28,18 +34,33 @@ void universalRemoteOta() {
     otaServer.on("/", HTTP_GET, [&]() { otaServer.send(200, "text/html", page); });
     otaServer.on("/update", HTTP_POST,
         [&]() {
-            bool ok = !Update.hasError();
+            bool ok = uploadStarted && uploadComplete && !uploadFailed && !Update.hasError();
             otaServer.send(ok ? 200 : 500, "text/plain", ok ? "Update OK - device restarting" : "Update failed");
             if (ok) restartPending = true;
+            uploadStarted = uploadComplete = false;
         },
         [&]() {
             HTTPUpload &upload = otaServer.upload();
             if (upload.status == UPLOAD_FILE_START) {
-                if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
+                uploadStarted = true;
+                uploadComplete = false;
+                uploadFailed = !Update.begin(UPDATE_SIZE_UNKNOWN);
+                if (uploadFailed) Update.printError(Serial);
             } else if (upload.status == UPLOAD_FILE_WRITE) {
-                if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) Update.printError(Serial);
+                if (!uploadStarted || uploadFailed) return;
+                if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                    uploadFailed = true;
+                    Update.printError(Serial);
+                }
             } else if (upload.status == UPLOAD_FILE_END) {
-                if (!Update.end(true)) Update.printError(Serial);
+                if (uploadStarted && !uploadFailed && upload.totalSize > 0) {
+                    uploadComplete = Update.end(true);
+                    if (!uploadComplete) { uploadFailed = true; Update.printError(Serial); }
+                } else { uploadFailed = true; Update.abort(); }
+            } else if (upload.status == UPLOAD_FILE_ABORTED) {
+                uploadFailed = true;
+                uploadComplete = false;
+                Update.abort();
             }
         });
 
@@ -65,4 +86,5 @@ void universalRemoteOta() {
         delay(2);
     }
     otaServer.stop();
+    if (Update.isRunning()) Update.abort();
 }

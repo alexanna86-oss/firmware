@@ -4,18 +4,16 @@
 #include "modules/universal_remote/nanoleaf_remote.h"
 #include "modules/universal_remote/ota_update.h"
 #include "modules/NRF24/nrf_rc_learn.h"
+#include "modules/universal_remote/remote_menu.h"
 
 void UniversalRemoteMenu::optionsMenu() {
-    options.clear();
+    std::vector<Option> options;
     options.push_back({"Nanoleaf", nanoleafMenu});
-    options.push_back({"NRF24 RC Learn+", nrf_rc_learn});
+    options.push_back({"NRF24 Activity Scan", nrf_rc_learn});
+    options.push_back({"NRF24 Known Device", nrf_rc_capture});
     options.push_back({"NRF24 Saved RC", nrf_rc_saved});
     options.push_back({"OTA Update", universalRemoteOta});
-    options.push_back({"Xiaomi TV / Joyn", []() {
-        displayInfo("TV/Joyn module is next", true);
-    }});
-    addOptionToMainMenu();
-    loopOptions(options, MENU_TYPE_SUBMENU, "Universal Remote");
+    remoteMenu(options, "Universal Remote");
 }
 
 void UniversalRemoteMenu::drawIcon(float scale) {

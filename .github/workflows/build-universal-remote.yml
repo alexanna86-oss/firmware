@@ -14,13 +14,23 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install PlatformIO
-        run: pip install platformio
+        run: |
+          pip install platformio==6.2.0
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib g++-multilib
+      - name: Test saved radio profiles
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tests/remote/profile_test.cpp -o /tmp/remote-profile-test
+          /tmp/remote-profile-test
       - name: Build LILYGO T-Embed CC1101
         run: pio run -e lilygo-t-embed-cc1101
       - name: Collect firmware
         run: |
+          python tools/verify_remote_build.py
           mkdir -p artifact
           find .pio/build/lilygo-t-embed-cc1101 -maxdepth 1 -type f \( -name '*.bin' -o -name '*.elf' \) -exec cp {} artifact/ \;
+          cp .pio/build/lilygo-t-embed-cc1101/build-manifest.json artifact/
+          cp docs/UNIVERSAL_REMOTE.md artifact/
       - uses: actions/upload-artifact@v4
         with:
           name: Bruce-Universal-Remote-LILYGO-T-Embed-CC1101
