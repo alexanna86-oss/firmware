@@ -14,11 +14,11 @@
 #include "core/settings.h"
 #include "custom_ir.h"
 #include "ir_utils.h"
+#include "modules/universal_remote/remote_menu.h"
 #include <IRrecv.h>
 #include <IRutils.h>
 #include <globals.h>
 
-#define IR_FREQUENCY 38000
 #define DUTY_CYCLE 0.330000
 
 String uint32ToString(uint32_t value) {
@@ -49,10 +49,21 @@ String uint32ToStringInverted(uint32_t value) {
     return String(buffer);
 }
 
-IrRead::IrRead(bool headless_mode, bool raw_mode) {
+IrRead::IrRead(bool headless_mode, bool raw_mode, uint32_t carrier) {
     headless = headless_mode;
-    raw = raw_mode;
+    raw = forceRaw = raw_mode;
+    frequency = carrier >= 30000 && carrier <= 60000 ? carrier : 38000;
     setup();
+}
+IrRead::~IrRead() { irrecv.disableIRIn(); }
+
+void irRawLearnMenu() {
+    std::vector<Option> opts;
+    for (uint32_t khz : {38, 36, 40, 56, 30, 33}) {
+        opts.push_back({String(khz) + " kHz", [khz]() { IrRead(false, true, khz * 1000); }});
+    }
+    displayInfo("RAW learns IR timings\nCarrier is selected manually\nReceiver cannot measure it", true);
+    remoteMenu(opts, "IR RAW carrier");
 }
 bool quickloop = false;
 
@@ -239,9 +250,16 @@ void IrRead::display_btn_options() {
 void IrRead::read_signal() {
     if (_read_signal || !irrecv.decode(&results)) return;
 
+    if (results.overflow) {
+        displayWarning("IR signal too long\nIncomplete capture rejected", true);
+        irrecv.resume();
+        begin();
+        return;
+    }
+
     _read_signal = true;
 
-    raw = (results.decode_type == decode_type_t::UNKNOWN) || hasACState(results.decode_type);
+    raw = forceRaw || (results.decode_type == decode_type_t::UNKNOWN) || hasACState(results.decode_type);
 
     display_banner();
 
@@ -272,7 +290,7 @@ void IrRead::emulate_signal() {
     IRCode code;
     if (raw) {
         code.type = "raw";
-        code.frequency = IR_FREQUENCY;
+        code.frequency = frequency;
         code.data = _captured_raw_signal;
     } else {
         code.type = "parsed";
@@ -285,7 +303,7 @@ void IrRead::emulate_signal() {
         code.data = resultToHexidecimal(&results);
         if (code.protocol == "") {
             code.type = "raw";
-            code.frequency = IR_FREQUENCY;
+            code.frequency = frequency;
             code.data = _captured_raw_signal;
         }
     }
@@ -349,7 +367,7 @@ void IrRead::append_to_file_str(const String &btn_name) {
 
     if (raw) {
         strDeviceContent += "type: raw\n";
-        strDeviceContent += "frequency: " + String(IR_FREQUENCY) + "\n";
+        strDeviceContent += "frequency: " + String(frequency) + "\n";
         strDeviceContent += "duty_cycle: " + String(DUTY_CYCLE) + "\n";
         strDeviceContent += "data: " + parse_raw_signal() + "\n";
     } else {
@@ -465,7 +483,10 @@ String IrRead::loop_headless(int max_loops) {
         return "";
     }
 
-    if (results.overflow) displayWarning("buffer overflow, data may be truncated", true);
+    if (results.overflow) {
+        Serial.println("# incomplete IR capture rejected");
+        return "";
+    }
 
     String r = "Filetype: IR signals file\n";
     r += "Version: 1\n";

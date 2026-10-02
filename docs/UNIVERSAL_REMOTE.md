@@ -66,8 +66,40 @@ T-Embed's built-in CC1101 is a different radio. Keep the existing wiring/pin set
   require a dedicated protocol implementation. Old captures made with the former
   hard-coded profile must be captured again; their incomplete metadata is not replayed.
 
-Xiaomi TV/Joyn was only a placeholder in the source and is removed from the menu.
-No unsupported TV feature has been added.
+## Xiaomi TV through the existing Raspberry Pi
+
+`Universal Remote > Xiaomi TV (Pi WiFi)` uses the same GET API as the user's
+existing ESP32 remote. Default Pi address: `192.168.8.77`, port `5050`.
+`Pi address / setup` stores a different IPv4 address with write/readback checking.
+This is the **Pi address**, not the TV address. Connect the T-Embed to the same LAN.
+The Pi retains its existing connection/authorization to the Xiaomi TV.
+
+Supported existing routes: `/channels`, `/tv/<id>`, `/joyn`, `/pro7`, `/orf1`,
+`/orf2`, `/jellyfin`, `/home`, `/back`, `/volup`, `/voldown`, `/mute`.
+The channel menu uses the real server list (array of `id`/`name` objects), with
+bounded response size (32 KiB), at most 192 entries and validated unique IDs.
+HTTP errors and explicit JSON `ok:false` are reported. Requests have connection
+and read timeouts and are never retried automatically. A successful HTTP reply
+means the server accepted the request, not proof of a visible TV reaction.
+
+The existing server was reached during development: `/` and `/channels` returned
+HTTP 200; OPTIONS advertised GET for all routes above without issuing TV commands.
+No new Pi installation is included or required for those existing routes.
+There is no verified Pi power-off route in the available source, and no universal
+Bluetooth power-off implementation. Neither is advertised as working.
+
+## Infrared learning and power codes
+
+The Universal Remote menu now links to IR learning, saved IR remotes and the
+existing TV-B-Gone power-code selection. These codes cannot cover every TV and
+some power codes toggle power instead of guaranteeing off.
+
+`IR RAW Learn` preserves raw mode even when a protocol is recognized. Select
+30/33/36/38/40/56 kHz according to your remote; the receiver cannot measure the
+original carrier. Captured timings and the selected carrier are saved together
+and used for replay. Normal decoded learning remains available. Overflowed,
+truncated captures are rejected instead of being saved as complete signals.
+RAW mode does not learn Bluetooth commands or overcome receiver frequency limits.
 
 ## Validation
 

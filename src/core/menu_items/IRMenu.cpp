@@ -16,6 +16,7 @@ void IRMenu::optionsMenu() {
         {"TV-B-Gone", StartTvBGone              },
         {"Custom IR", otherIRcodes              },
         {"IR Read",   [=]() { IrRead(); }       },
+        {"IR RAW Learn", irRawLearnMenu        },
 #if !defined(LITE_VERSION)
         {"IR Jammer", startIrJammer             }, // Simple frequency-adjustable jammer
 #endif

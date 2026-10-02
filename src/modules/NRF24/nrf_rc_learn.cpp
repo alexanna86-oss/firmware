@@ -134,7 +134,10 @@ static void capture() {
 }
 static void replay() {
     Packet p;
-    if (!loadRecord("packetV1", p)) { displayWarning("No valid saved packet", true); return; }
+    if (!loadRecord("packetV1", p)) {
+        displayWarning("No packet captured\nActivity scan is not a command\nUse Known Device + Capture", true);
+        return;
+    }
     if (!startRadio()) return;
     if (!applyProfile(p)) { stopRadio(); displayError("Unsupported radio profile", true); return; }
     NRFradio.openWritingPipe(p.address);

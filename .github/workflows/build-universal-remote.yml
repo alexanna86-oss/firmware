@@ -25,6 +25,10 @@ jobs:
           python -m unittest discover -s tests/remote -p 'test_*.py'
       - name: Build LILYGO T-Embed CC1101
         run: pio run -e lilygo-t-embed-cc1101
+      - name: Test Raspberry Pi channel responses
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined -I .pio/libdeps/lilygo-t-embed-cc1101/ArduinoJson/src tests/remote/pi_reply_test.cpp -o /tmp/pi-reply-test
+          /tmp/pi-reply-test
       - name: Collect firmware
         run: |
           python tools/verify_remote_build.py

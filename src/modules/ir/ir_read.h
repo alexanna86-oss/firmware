@@ -5,7 +5,8 @@ class IrRead {
 public:
     IRrecv irrecv = IRrecv(bruceConfigPins.irRx, SAFE_STACK_BUFFER_SIZE / 2, 50);
 
-    IrRead(bool headless_mode = false, bool raw_mode = false);
+    IrRead(bool headless_mode = false, bool raw_mode = false, uint32_t frequency = 38000);
+    ~IrRead();
 
     void setup();
     void loop();
@@ -25,6 +26,8 @@ private:
     String strDeviceContent = "";
     bool headless = false;
     bool raw = false;
+    bool forceRaw = false;
+    uint32_t frequency = 38000;
 
     void cls();
     void display_banner();
@@ -74,3 +77,5 @@ private:
                                            "MODE_FLASH", "MODE_STROBE",  "MODE_FADE",   "MODE_SMOOTH"};
     std::vector<String> &quickButtons = quickButtonsTV;
 };
+
+void irRawLearnMenu();
