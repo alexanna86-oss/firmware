@@ -5,6 +5,9 @@ on:
   push:
     branches: [ universal-remote ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -48,3 +51,10 @@ jobs:
           name: Bruce-Universal-Remote-LILYGO-T-Embed-CC1101
           path: artifact/
           if-no-files-found: error
+
+      - name: Publish easy-download firmware release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete lilygo-rc-auto-latest --cleanup-tag -y || true
+          gh release create lilygo-rc-auto-latest             artifact/firmware.bin#firmware.bin             artifact/firmware.factory.bin#firmware.factory.bin             artifact/build-manifest.json#build-manifest.json             --target "${GITHUB_SHA}"             --title "LILYGO RC AUTO Stable"             --notes "Stable LILYGO T-Embed CC1101 Universal Remote build with saved Wi-Fi and RC AUTO learn stability fix. For normal updates use firmware.bin. Use firmware.factory.bin only for a full USB factory flash."
