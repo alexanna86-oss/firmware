@@ -188,3 +188,8 @@ record (`version:1`, `ip`, `port`, `token`) only after authenticating on the con
 Wi-Fi network, verifies storage, then removes the import file. Transfer the JSON
 with `storage write` rather than placing credentials in logged command arguments.
 Factory flashing can erase settings; subsequent updates should use app-only/OTA.
+
+
+## Wi-Fi persistence
+
+Successful station connections are stored through Bruce's existing Wi-Fi credential store. Universal Remote network features now first try saved networks automatically before opening the Wi-Fi selection screen. This applies to Nanoleaf, Xiaomi TV via Raspberry Pi, and the OTA update server. App-only OTA updates keep the saved credentials. A full `firmware.factory.bin` installation may erase settings, so Wi-Fi may need to be entered again after a factory flash.

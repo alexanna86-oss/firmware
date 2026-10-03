@@ -13,7 +13,8 @@ void universalRemoteOta() {
         return;
     }
     if (!WiFi.isConnected()) {
-        if (!wifiConnectMenu(WIFI_STA)) {
+        displayInfo("WLAN: gespeicherte Verbindung wird gesucht...");
+        if (!wifiConnecttoKnownNet() && !wifiConnectMenu(WIFI_STA)) {
             displayError("WiFi connection failed", true);
             return;
         }

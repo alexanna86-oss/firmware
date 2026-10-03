@@ -52,7 +52,10 @@ static void loadPiHost() {
 }
 static bool requestPi(const String &route, String &body, bool post = false) {
     loadPiHost();
-    if (!WiFi.isConnected()) wifiConnectMenu(WIFI_STA);
+    if (!WiFi.isConnected()) {
+        displayInfo("WLAN: gespeicherte Verbindung wird gesucht...");
+        if (!wifiConnecttoKnownNet()) wifiConnectMenu(WIFI_STA);
+    }
     if (!WiFi.isConnected()) return false;
     displayInfo("Pi: " + route + "\nWaiting for server...");
     WiFiClient client;

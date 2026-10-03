@@ -59,6 +59,8 @@ static bool saveNanoleaf(bool showError = true) {
 }
 static bool ensureWifi() {
     if (WiFi.isConnected()) return true;
+    displayInfo("WLAN: gespeicherte Verbindung wird gesucht...");
+    if (wifiConnecttoKnownNet() && WiFi.isConnected()) return true;
     wifiConnectMenu(WIFI_STA);
     return WiFi.isConnected();
 }
