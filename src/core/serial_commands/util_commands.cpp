@@ -1,4 +1,5 @@
 #include "util_commands.h"
+#include "modules/universal_remote/nanoleaf_remote.h"
 #include "core/main_menu.h"
 #include "core/sd_functions.h"
 #include "core/utils.h" // to return optionsJSON
@@ -412,7 +413,31 @@ uint32_t loaderCallback(cmd *c) {
     return false;
 }
 
+// Restore only from a local file: credentials must never enter CLI command logs.
+uint32_t nanoleafCallback(cmd *c) {
+    Command command(c);
+    String action = command.getArgument("action").getValue();
+    if (action == "status") { serialDevice->println(nanoleafStatus()); return true; }
+    if (action != "restore") return false;
+    String path = command.getArgument("file").getValue();
+    FS *fs;
+    if (!path.startsWith("/") || !getFsStorage(fs)) return false;
+    File file = fs->open(path, FILE_READ);
+    if (!file || file.size() > 1024 || file.isDirectory()) { file.close(); return false; }
+    String data = file.readString(); file.close();
+    bool ok = nanoleafRestore(data);
+    if (ok) {
+        bool removed = fs->remove(path);
+        serialDevice->println(removed ? "Nanoleaf restored; import removed" : "Nanoleaf restored; remove import file");
+        serialDevice->println(nanoleafStatus());
+    } else serialDevice->println("Nanoleaf restore failed: check WiFi, IP and key");
+    return ok;
+}
+
 void createUtilCommands(SimpleCLI *cli) {
+    Command nanoleaf = cli->addCommand("nanoleaf", nanoleafCallback);
+    nanoleaf.addPosArg("action", "status");
+    nanoleaf.addPosArg("file", "");
     cli->addCommand("uptime", uptimeCallback);
     cli->addCommand("date", dateCallback);
     cli->addCommand("i2c", i2cCallback);

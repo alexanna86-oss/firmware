@@ -1,4 +1,5 @@
 #include "nanoleaf_remote.h"
+#include "nanoleaf_pairing.h"
 #include "remote_menu.h"
 #include "core/mykeyboard.h"
 #include "core/wifi/wifi_common.h"
@@ -8,7 +9,7 @@
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
 
-static String nlIp, nlToken, nlId;
+static String nlIp, nlToken, nlId, nlBackup;
 static uint16_t nlPort = 16021;
 static bool validIp(const String &s) {
     IPAddress ip;
@@ -21,7 +22,7 @@ static bool validToken(const String &s) {
 }
 static void loadNanoleaf() {
     Preferences p;
-    nlIp = nlToken = nlId = ""; nlPort = 16021;
+    nlIp = nlToken = nlId = nlBackup = ""; nlPort = 16021;
     if (!p.begin("nanoleaf", true)) return;
     String data = p.getString("configV1", "");
     if (!data.isEmpty()) {
@@ -29,6 +30,7 @@ static void loadNanoleaf() {
         if (!deserializeJson(doc, data) && doc["version"].as<int>() == 1) {
             nlIp = doc["ip"].as<String>(); nlToken = doc["token"].as<String>();
             nlId = doc["id"].as<String>(); nlPort = doc["port"] | 16021;
+            nlBackup = doc["pairedToken"].as<String>();
         }
     } else {
         nlIp = p.getString("ip", ""); nlToken = p.getString("token", "");
@@ -36,16 +38,23 @@ static void loadNanoleaf() {
     p.end();
     if (!validIp(nlIp) || !nlPort) { nlIp = nlToken = nlId = ""; nlPort = 16021; }
     if (!nlToken.isEmpty() && !validToken(nlToken)) nlToken = "";
+    if (!validToken(nlBackup)) nlBackup = "";
 }
-static bool saveNanoleaf() {
+static bool saveNanoleaf(bool showError = true) {
+    if (validToken(nlToken)) nlBackup = nlToken;
     JsonDocument doc;
     doc["version"] = 1; doc["ip"] = nlIp; doc["token"] = nlToken; doc["id"] = nlId; doc["port"] = nlPort;
+    doc["pairedToken"] = nlBackup;
     String data; serializeJson(doc, data);
     Preferences p;
-    if (!p.begin("nanoleaf", false)) { displayError("Cannot open settings", true); return false; }
-    bool ok = p.putString("configV1", data) == data.length() && p.getString("configV1", "") == data;
+    if (!p.begin("nanoleaf", false)) { if (showError) displayError("Cannot open settings", true); return false; }
+    bool ok = p.putString("configV1", data) == data.length();
     p.end();
-    if (!ok) { loadNanoleaf(); displayError("Nanoleaf save failed", true); }
+    if (ok) {
+        ok = p.begin("nanoleaf", true);
+        if (ok) { ok = p.getString("configV1", "") == data; p.end(); }
+    }
+    if (!ok) { loadNanoleaf(); if (showError) displayError("Nanoleaf save failed", true); }
     return ok;
 }
 static bool ensureWifi() {
@@ -57,6 +66,55 @@ static String baseUrl() { return "http://" + nlIp + ":" + String(nlPort) + "/api
 static bool beginHttp(HTTPClient &http, const String &url) {
     http.setConnectTimeout(1000); http.setTimeout(1500);
     return http.begin(url);
+}
+// Read-only authentication check; bound both known-length and chunked responses.
+class NanoleafResponse : public Stream {
+public:
+    String body;
+    size_t write(uint8_t v) override { return write(&v, 1); }
+    size_t write(const uint8_t *data, size_t len) override {
+        if (len > 4096 - body.length()) return 0;
+        return body.concat(reinterpret_cast<const char *>(data), len) ? len : 0;
+    }
+    int available() override { return 0; }
+    int read() override { return -1; }
+    int peek() override { return -1; }
+    void flush() override {}
+};
+static bool acceptsToken(const String &ip, uint16_t port, const String &token) {
+    if (!validIp(ip) || !port || !validToken(token) || !WiFi.isConnected()) return false;
+    HTTPClient http;
+    if (!beginHttp(http, "http://" + ip + ":" + String(port) + "/api/v1/" + token + "/state")) return false;
+    http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+    int code = http.GET();
+    NanoleafResponse response;
+    int received = code == 200 && http.getSize() <= 4096 ? http.writeToStream(&response) : -1;
+    http.end();
+    JsonDocument doc;
+    return received >= 0 && !deserializeJson(doc, response.body) && doc["on"]["value"].is<bool>();
+}
+// Never discard the last paired key while selecting an unpaired LAN candidate.
+static void selectAddress(const String &ip, uint16_t port, const String &id) {
+    bool same = ip == nlIp && port == nlPort && (id.isEmpty() || nlId.isEmpty() || id == nlId);
+    String token = nanoleafSelectToken(nlToken, nlBackup, same, [&](const String &key) {
+        return acceptsToken(ip, port, key);
+    });
+    nlIp = ip; nlPort = port; nlId = id; nlToken = token;
+}
+String nanoleafStatus() {
+    loadNanoleaf();
+    return "IP " + nlIp + ":" + String(nlPort) + " Token " + (nlToken.isEmpty() ? "missing" : "saved");
+}
+bool nanoleafRestore(const String &data) {
+    if (data.length() > 1024) return false;
+    JsonDocument doc;
+    if (deserializeJson(doc, data) || doc["version"].as<int>() != 1) return false;
+    String ip = doc["ip"].as<String>(), token = doc["token"].as<String>();
+    int port = doc["port"] | 16021;
+    if (port < 1 || port > 65535 || !acceptsToken(ip, port, token)) return false;
+    loadNanoleaf();
+    nlIp = ip; nlPort = port; nlToken = token; nlId = "";
+    return saveNanoleaf(false);
 }
 static bool nlPut(const String &endpoint, const String &json) {
     loadNanoleaf();
@@ -81,12 +139,9 @@ static bool chooseCandidate(const std::vector<Candidate> &found, const char *tit
     loopOptions(opts, MENU_TYPE_SUBMENU, title);
     if (chosen < 0) return false;
     const Candidate &c = found[chosen];
-    // A token belongs to a controller. Preserve it across DHCP changes only with a matching mDNS id.
-    bool same = !c.id.isEmpty() && !nlId.isEmpty() ? c.id == nlId : c.ip == nlIp && c.port == nlPort;
-    if (!same) nlToken = "";
-    nlIp = c.ip; nlPort = c.port; nlId = c.id;
+    selectAddress(c.ip, c.port, c.id);
     if (!saveNanoleaf()) return false;
-    displaySuccess("Address saved: " + nlIp, true);
+    displaySuccess(nlToken.isEmpty() ? "IP saved; pairing needed" : "Connection saved + paired", true);
     return true;
 }
 static uint32_t ipNumber(const IPAddress &ip) {
@@ -168,13 +223,15 @@ static void pairNanoleaf() {
 static void setupNanoleaf() {
     loadNanoleaf();
     String ip = keyboard(nlIp, 15, "Nanoleaf IPv4:");
-    if (ip.isEmpty()) return;
+    if (ip.isEmpty() || ip == "\x1B") return;
     if (!validIp(ip)) { displayError("Invalid IPv4 address", true); return; }
     bool same = ip == nlIp;
-    String token = keyboard(same ? nlToken : "", 128, "Token (empty = pair later):", true);
+    String token = keyboard(same ? nlToken : "", 128, "Token (empty = keep key):", true);
+    if (token == "\x1B") return;
     if (!token.isEmpty() && !validToken(token)) { displayError("Invalid token", true); return; }
-    if (!same) nlId = "";
-    nlIp = ip; nlToken = token; nlPort = 16021;
+    if (ip != nlIp && !ensureWifi()) return;
+    selectAddress(ip, 16021, same ? nlId : "");
+    if (!token.isEmpty()) nlToken = token;
     if (saveNanoleaf()) displaySuccess("Nanoleaf saved", true);
 }
 static void setState(const char *key, int value) {
@@ -195,7 +252,7 @@ void nanoleafMenu() {
     std::vector<Option> opts = {
         {"Auto Find", []() { discoverNanoleaf(); }},
         {"Auto Pair + Save", pairNanoleaf},
-        {"Saved connection", []() { loadNanoleaf(); displayInfo("IP " + nlIp + ":" + String(nlPort) + "\nToken " + (nlToken.isEmpty() ? "not set" : "saved"), true); }},
+        {"Saved connection", []() { displayInfo(nanoleafStatus(), true); }},
         {"Power ON", []() { nlPut("state", "{\"on\":{\"value\":true}}"); }},
         {"Power OFF", []() { nlPut("state", "{\"on\":{\"value\":false}}"); }},
         {"Brightness 25%", []() { setState("brightness", 25); }},

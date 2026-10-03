@@ -26,6 +26,8 @@ jobs:
           /tmp/tv-power-test
           g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tests/remote/ir_favorite_test.cpp -o /tmp/ir-favorite-test
           /tmp/ir-favorite-test
+          g++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tests/remote/nanoleaf_pairing_test.cpp -o /tmp/nanoleaf-pairing-test
+          /tmp/nanoleaf-pairing-test
           python -m unittest discover -s tests/remote -p 'test_*.py'
       - name: Build LILYGO T-Embed CC1101
         run: pio run -e lilygo-t-embed-cc1101

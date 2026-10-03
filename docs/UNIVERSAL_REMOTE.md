@@ -172,3 +172,19 @@ physical controls and a complete OTA/reboot cycle must be checked on the device.
 References: [Nanoleaf pairing](https://support.nanoleaf.me/hc/en-us/articles/41108368751892-API-Authentication-Security),
 [Nanoleaf OpenAPI](https://nanoleaf.atlassian.net/wiki/spaces/NOAD1/pages/2789310530),
 [RF24 API](https://rf24.readthedocs.io/en/v1.4.11/classRF24.html).
+
+## Nanoleaf pairing persistence
+
+Selecting a discovered controller at a new DHCP address now checks the saved key
+with a read-only, size-limited state request. A successful check retains pairing.
+Selecting an unpaired or unreachable candidate preserves the previous paired key
+inside the same atomic Preferences record for later recovery. Saving closes and
+reopens Preferences to verify the committed record. Manual setup treats an empty
+key as keep/recover; cancelling either keyboard leaves settings unchanged.
+
+For local maintenance, `nanoleaf status` shows the saved address and whether a key
+exists, never the key itself. `nanoleaf restore /file.json` imports a bounded JSON
+record (`version:1`, `ip`, `port`, `token`) only after authenticating on the connected
+Wi-Fi network, verifies storage, then removes the import file. Transfer the JSON
+with `storage write` rather than placing credentials in logged command arguments.
+Factory flashing can erase settings; subsequent updates should use app-only/OTA.
