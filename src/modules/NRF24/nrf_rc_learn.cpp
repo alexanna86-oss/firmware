@@ -372,45 +372,40 @@ static bool loadSafeTune(uint8_t slot, uint8_t &channel, uint8_t &rate, uint16_t
 static bool safeFindSignal(uint8_t slot, bool saveSlot) {
     displayInfo(
         String(saveSlot ? AUTO_SLOT_NAMES[slot] : "RC SAFE SIGNAL") +
-        "\nOriginal-RC Taste gedrueckt halten\nOK = sicherer Scan",
+        "\nOriginal-RC direkt daneben halten\nTaste gedrueckt halten + OK",
         true
     );
     delay(250);
 
     if (!startRadio()) return false;
 
-    static uint16_t hits[3][126];
+    static uint16_t hits[126];
     memset(hits, 0, sizeof(hits));
-    const rf24_datarate_e rates[] = {RF24_250KBPS, RF24_1MBPS, RF24_2MBPS};
-    const uint8_t dummyAddress[5] = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7};
 
+    // RPD is a pure energy detector. Do not try to infer data rate here:
+    // a single stable 1 Mbps RX configuration avoids unnecessary radio
+    // reconfiguration and gives each RF channel a much longer dwell time.
     NRFradio.setAutoAck(false);
     NRFradio.disableAckPayload();
     NRFradio.disableDynamicPayloads();
     NRFradio.setAddressWidth(5);
     NRFradio.setPayloadSize(32);
-    NRFradio.openReadingPipe(1, dummyAddress);
+    NRFradio.setDataRate(RF24_1MBPS);
 
-    // No TFT drawing while the shared SPI bus is being used by nRF24.
-    // RPD only measures RF energy; it does not require knowing the transmitter address.
-    constexpr uint8_t passes = 32;
+    constexpr uint8_t passes = 64;
+    constexpr uint16_t dwellUs = 1000;
+
+    // Do not draw to TFT and do not poll buttons while nRF24 owns the
+    // shared SPI wiring. This scan is deliberately boring but robust.
     for (uint8_t pass = 0; pass < passes; ++pass) {
-        for (uint8_t ri = 0; ri < 3; ++ri) {
-            NRFradio.setDataRate(rates[ri]);
-            for (uint8_t ch = 0; ch < 126; ++ch) {
-                if (check(EscPress)) {
-                    stopRadio();
-                    displayWarning("RC SAFE Scan abgebrochen", true);
-                    return false;
-                }
-                NRFradio.setChannel(ch);
-                NRFradio.startListening();
-                delayMicroseconds(180);
-                bool hit = NRFradio.testRPD();
-                NRFradio.stopListening();
-                if (hit && hits[ri][ch] < 0xFFFF) ++hits[ri][ch];
-                if ((ch & 7) == 0) vTaskDelay(pdMS_TO_TICKS(1));
-            }
+        for (uint8_t ch = 0; ch < 126; ++ch) {
+            NRFradio.setChannel(ch);
+            NRFradio.startListening();
+            delayMicroseconds(dwellUs);
+            bool hit = NRFradio.testRPD();
+            NRFradio.stopListening();
+            if (hit && hits[ch] < 0xFFFF) ++hits[ch];
+            if ((ch & 7) == 0) vTaskDelay(pdMS_TO_TICKS(1));
         }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
@@ -418,37 +413,43 @@ static bool safeFindSignal(uint8_t slot, bool saveSlot) {
     stopRadio();
     delay(150);
 
-    uint8_t bestRateIndex = 0, bestChannel = 0;
-    uint16_t bestHits = 0;
-    for (uint8_t ri = 0; ri < 3; ++ri) {
-        for (uint8_t ch = 0; ch < 126; ++ch) {
-            if (hits[ri][ch] > bestHits) {
-                bestHits = hits[ri][ch];
-                bestRateIndex = ri;
-                bestChannel = ch;
+    uint8_t topCh[5] = {0, 0, 0, 0, 0};
+    uint16_t topHits[5] = {0, 0, 0, 0, 0};
+    for (uint8_t ch = 0; ch < 126; ++ch) {
+        uint16_t h = hits[ch];
+        if (!h) continue;
+        for (uint8_t pos = 0; pos < 5; ++pos) {
+            if (h > topHits[pos]) {
+                for (int8_t move = 4; move > (int8_t)pos; --move) {
+                    topHits[move] = topHits[move - 1];
+                    topCh[move] = topCh[move - 1];
+                }
+                topHits[pos] = h;
+                topCh[pos] = ch;
+                break;
             }
         }
     }
 
-    if (!bestHits) {
+    if (!topHits[0]) {
         displayWarning(
-            "RC SAFE: kein starkes 2.4GHz Signal\nRC direkt daneben halten\nund Taste dauernd druecken",
+            "Kein Signal ueber RPD-Schwelle\nRC direkt am LILYGO testen\nAuto einschalten + RC-Taste halten",
             true
         );
         return false;
     }
 
-    uint8_t rate = rateCode(rates[bestRateIndex]);
-    if (saveSlot) saveSafeTune(slot, bestChannel, rate, bestHits);
+    // Rate is intentionally not claimed by this energy-only scan.
+    if (saveSlot) saveSafeTune(slot, topCh[0], 0, topHits[0]);
 
-    displaySuccess(
-        String(saveSlot ? AUTO_SLOT_NAMES[slot] : "RC SAFE") +
-        "\nSignal gefunden: CH " + String(bestChannel) +
-        " / " + safeRateName(rate) +
-        "\nTreffer " + String(bestHits) + "/" + String(passes) +
-        "\nRohdecoder aus Sicherheitsgruenden AUS",
-        true
-    );
+    String found = String(saveSlot ? AUTO_SLOT_NAMES[slot] : "RC SAFE") +
+                   "\nStaerkster Kanal: CH " + String(topCh[0]) +
+                   " (" + String(2400 + topCh[0]) + " MHz)" +
+                   "\nTreffer " + String(topHits[0]) + "/" + String(passes);
+    if (topHits[1]) found += "\n#2 CH " + String(topCh[1]) + " " + String(topHits[1]);
+    if (topHits[2]) found += "  #3 CH " + String(topCh[2]) + " " + String(topHits[2]);
+
+    displaySuccess(found, true);
     return true;
 }
 
