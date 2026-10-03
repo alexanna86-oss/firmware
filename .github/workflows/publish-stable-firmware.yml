@@ -1,0 +1,30 @@
+name: Publish Stable Firmware Download
+
+on:
+  push:
+    branches: [ universal-remote ]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified stable build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p artifact
+          gh run download 37161159701             --repo "${GITHUB_REPOSITORY}"             --name "Bruce-Universal-Remote-LILYGO-T-Embed-CC1101"             --dir artifact
+          test -f artifact/firmware.bin
+          test -f artifact/firmware.factory.bin
+
+      - name: Publish simple GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete lilygo-rc-auto-stable --repo "${GITHUB_REPOSITORY}" --cleanup-tag -y || true
+          gh release create lilygo-rc-auto-stable             --repo "${GITHUB_REPOSITORY}"             --target "c3491fb601cff16f0d8afa4fd90637b62176770a"             artifact/firmware.bin#firmware.bin             artifact/firmware.factory.bin#firmware.factory.bin             artifact/build-manifest.json#build-manifest.json             --title "LILYGO RC AUTO Stable"             --notes "Verified stable build c3491fb6. For OTA use firmware.bin. firmware.factory.bin is only for a full USB factory flash."
