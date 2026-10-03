@@ -115,11 +115,12 @@ static void configurePromiscuous(rf24_datarate_e rate) {
 }
 
 static void scanActivity(uint16_t passes) {
+    displayInfo("RC-Taste gedrueckt halten\nKanaele 0-125\nRPD + Rohpaket-Erkennung", true);
+    delay(150);
     if (!startRadio()) return;
     configurePromiscuous(RF24_1MBPS);
     Scan s;
     constexpr uint8_t samplesPerPass = 3;
-    displayInfo("RC-Taste gedrueckt halten\nKanaele 0-125\nRPD + Rohpaket-Erkennung", true);
     for (uint16_t pass = 0; pass < passes; ++pass) {
         for (uint8_t ch = 0; ch < 126; ++ch) {
             if (check(EscPress)) { stopRadio(); return; }
@@ -267,13 +268,16 @@ static void addAutoCandidate(AutoCandidate (&items)[8], uint8_t &used, const Pac
 }
 
 static bool autoDiscoverProfile(Packet &best) {
+    displayInfo("RC AUTO FIND\nOriginal-Taste halten\nOK druecken, dann RC-Taste halten", true);
+    delay(200);
     if (!startRadio()) return false;
-    AutoCandidate candidates[8];
+
+    AutoCandidate candidates[8] = {};
     uint8_t used = 0;
     uint32_t rawFrames = 0, rpdSeen = 0;
     const rf24_datarate_e rates[] = {RF24_250KBPS, RF24_1MBPS, RF24_2MBPS};
 
-    displayInfo("RC AUTO FIND\nOriginal-Taste halten\nSuche Kanal + Rate + ESB/CRC16", true);
+    vTaskDelay(pdMS_TO_TICKS(1));
     uint32_t start = millis(), lastUi = 0;
     while (millis() - start < 12000) {
         for (auto rate : rates) {
@@ -284,21 +288,29 @@ static bool autoDiscoverProfile(Packet &best) {
                 NRFradio.startListening();
                 delayMicroseconds(1000);
                 if (NRFradio.testRPD()) ++rpdSeen;
-                while (NRFradio.available()) {
+                uint8_t drained = 0;
+                while (NRFradio.available() && drained < 4) {
                     uint8_t raw[32];
                     NRFradio.read(raw, sizeof(raw));
+                    ++drained;
                     ++rawFrames;
                     Packet p;
                     if (decodeEsbRaw(raw, sizeof(raw), ch, rate, p)) addAutoCandidate(candidates, used, p);
                 }
                 NRFradio.stopListening();
-                if (millis() - lastUi > 500) {
+
+                // The T-Embed display and nRF24 share the SPI wiring. Yield often so
+                // the ESP32-S3 watchdog and UI task keep running during the long sweep.
+                if ((ch & 7) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+
+                if (millis() - lastUi > 750) {
                     displayInfo("AUTO FIND\nRate " + String(rateCode(rate) == 2 ? "250K" : rateCode(rate) == 1 ? "2M" : "1M") +
                                 " CH " + String(ch) + "\nRaw " + String(rawFrames) +
                                 " Decode " + String(used));
                     lastUi = millis();
                 }
             }
+            vTaskDelay(pdMS_TO_TICKS(1));
         }
     }
     stopRadio();
