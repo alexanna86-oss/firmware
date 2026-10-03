@@ -46,14 +46,17 @@ static void ccMenu() {
 static void nrfMenu() {
     remoteMenu({
         {"Modul und Pins testen", nrf_rc_diagnostics},
-        {"Funk suchen", nrf_rc_learn},
+        {"RC AUTO: Profil suchen", nrf_rc_auto_find},
+        {"RC AUTO: Taste lernen", nrf_rc_auto_learn},
+        {"RC AUTO: Gelernte Tasten", nrf_rc_auto_saved},
+        {"Funkaktivitaet suchen", nrf_rc_learn},
         {"Laenger suchen", nrf_rc_long_scan},
         {"Gespeicherte Messung / Pakete", nrf_rc_saved},
-        {"Bekanntes Geraet einrichten", nrf_rc_capture},
-        {"Warum kein Auto gefunden?", []() {
-            displayInfo("Fernsteuerung mehrfach druecken\nAbstand ca. 0.5-1 m testen\nScan sieht auch WLAN-Stoerung\nKein automatisches RC-Protokoll", true);
+        {"Bekanntes Geraet manuell", nrf_rc_capture},
+        {"Wenn AUTO nichts findet", []() {
+            displayInfo("AUTO trennt drei Faelle:\nkein 2.4-GHz Signal / nur Funkaktivitaet /\nESB-Paket dekodiert. Hopping, Pairing,\nVerschluesselung oder anderes Protokoll\nsind nicht universell lernbar.", true);
         }},
-    }, "nRF24 / 2.4 GHz");
+    }, "nRF24 / RC AUTO");
 }
 void remoteRadioMenu() {
     remoteMenu({{"nRF24: 2.4 GHz / RC", nrfMenu}, {"CC1101: Sub-GHz", ccMenu}}, "Funk: Modul waehlen");

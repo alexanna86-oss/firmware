@@ -25,7 +25,23 @@ template <typename T> static bool saveRecord(const char *key, T &record) {
     T verify;
     return ok && loadRecord(key, verify) && memcmp(&record, &verify, sizeof(T)) == 0;
 }
+static void forceTEmbedNrfPins() {
+#if defined(T_EMBED_1101)
+    auto &bus = bruceConfigPins.NRF24_bus;
+    if (bus.sck != (gpio_num_t)NRF24_SCK_PIN || bus.miso != (gpio_num_t)NRF24_MISO_PIN ||
+        bus.mosi != (gpio_num_t)NRF24_MOSI_PIN || bus.cs != (gpio_num_t)NRF24_SS_PIN ||
+        bus.io0 != (gpio_num_t)NRF24_CE_PIN) {
+        bus = BruceConfigPins::SPIPins(
+            (gpio_num_t)NRF24_SCK_PIN, (gpio_num_t)NRF24_MISO_PIN, (gpio_num_t)NRF24_MOSI_PIN,
+            (gpio_num_t)NRF24_SS_PIN, (gpio_num_t)NRF24_CE_PIN
+        );
+        Serial.println("[NRF24] T-Embed bus restored to board pins");
+    }
+#endif
+}
+
 static bool startRadio() {
+    forceTEmbedNrfPins();
     if (bruceConfigPins.NRF24_bus.checkConflict(GPIO_NUM_NC) || !nrf_start(NRF_MODE_SPI)) {
         displayError("Check NRF24 module/pins", true);
         return false;
@@ -46,7 +62,11 @@ void nrf_rc_diagnostics() {
                 "\nSCK " + String(bus.sck) + " MISO " + String(bus.miso) +
                 " MOSI " + String(bus.mosi), true);
     if (!startRadio()) {
-        displayInfo("Externes nRF24 erforderlich\n3.3V, GND und SPI pruefen\nCC1101 ist kein nRF24", true);
+#if defined(T_EMBED_1101)
+        displayInfo("T-Embed nRF24 nicht erreichbar\nBoard-Pins: CE43 CS44\nSPI: SCK11 MISO10 MOSI9", true);
+#else
+        displayInfo("nRF24 nicht erreichbar\n3.3V, GND und SPI pruefen\nCC1101 ist kein nRF24", true);
+#endif
         return;
     }
     bool ok = NRFradio.isChipConnected();
@@ -74,29 +94,53 @@ static void showScan(const Scan &s) {
     }
     remoteMenu(opts, "Activity: strongest first");
 }
+
+static void configurePromiscuous(rf24_datarate_e rate) {
+    NRFradio.stopListening();
+    NRFradio.setAutoAck(false);
+    NRFradio.disableCRC();
+    NRFradio.disableAckPayload();
+    NRFradio.disableDynamicPayloads();
+    NRFradio.setAddressWidth(2);
+    NRFradio.setPayloadSize(32);
+    NRFradio.setRetries(0, 0);
+    NRFradio.flush_rx();
+    NRFradio.flush_tx();
+    NRFradio.setDataRate(rate);
+    const uint8_t noiseAddress[][2] = {
+        {0x55, 0x55}, {0xAA, 0xAA}, {0xA0, 0xAA},
+        {0xAB, 0xAA}, {0xAC, 0xAA}, {0xAD, 0xAA}
+    };
+    for (uint8_t i = 0; i < 6; ++i) NRFradio.openReadingPipe(i, noiseAddress[i]);
+}
+
 static void scanActivity(uint16_t passes) {
     if (!startRadio()) return;
-    NRFradio.disableCRC();
-    NRFradio.setDataRate(RF24_1MBPS);
+    configurePromiscuous(RF24_1MBPS);
     Scan s;
     constexpr uint8_t samplesPerPass = 3;
-    displayInfo("Sender-Taste gedrueckt halten\nAlle Kanaele 0-125\nESC: alte Messung bleibt", true);
+    displayInfo("RC-Taste gedrueckt halten\nKanaele 0-125\nRPD + Rohpaket-Erkennung", true);
     for (uint16_t pass = 0; pass < passes; ++pass) {
         for (uint8_t ch = 0; ch < 126; ++ch) {
             if (check(EscPress)) { stopRadio(); return; }
             NRFradio.setChannel(ch);
             for (uint8_t sample = 0; sample < samplesPerPass; ++sample) {
                 NRFradio.startListening();
-                delayMicroseconds(500);
-                // Read the RPD latch after RX ends, before a new RX clears it.
+                delayMicroseconds(800);
+                bool hit = NRFradio.testRPD();
+                if (NRFradio.available()) {
+                    uint8_t raw[32];
+                    NRFradio.read(raw, sizeof(raw));
+                    hit = true;
+                }
                 NRFradio.stopListening();
-                if (NRFradio.testRPD()) ++s.hits[ch];
+                if (hit) ++s.hits[ch];
             }
             if ((ch & 7) == 0) delay(1);
         }
         s.samples += samplesPerPass;
         if ((pass & 3) == 0) displayInfo("Funk suchen " + String(pass + 1) + "/" + String(passes) +
-                                       "\nSender mehrfach betaetigen\nESC bricht ab");
+                                       "\nOriginal-RC betaetigen\nESC bricht ab");
     }
     stopRadio();
     if (!saveRecord("scanV1", s)) { displayError("Scan save failed", true); return; }
@@ -125,6 +169,266 @@ static void showPacket(const Packet &p) {
     displayInfo("CH " + String(p.channel) + " " + (p.rate == 2 ? "250K" : p.rate == 1 ? "2M" : "1M") +
                 "\nAddr " + addressText(p) + "\nWidth " + String(p.width) + " CRC " + String(p.crc * 8) +
                 "\nPackets " + String(p.count), true);
+}
+
+static const char *AUTO_SLOT_NAMES[8] = {
+    "Vorwaerts", "Rueckwaerts", "Links", "Rechts", "Turbo", "Licht", "Taste 7", "Taste 8"
+};
+
+static uint16_t rcCrcUpdate(uint16_t crc, uint8_t byte, uint8_t bits) {
+    crc ^= ((uint16_t)byte << 8);
+    while (bits--) crc = (crc & 0x8000) ? (uint16_t)((crc << 1) ^ 0x1021) : (uint16_t)(crc << 1);
+    return crc;
+}
+
+static uint8_t rateCode(rf24_datarate_e rate) {
+    if (rate == RF24_2MBPS) return 1;
+    if (rate == RF24_250KBPS) return 2;
+    return 0;
+}
+
+static bool decodeEsbRaw(
+    const uint8_t *rawBuf, uint8_t size, uint8_t channel, rf24_datarate_e rate, Packet &out
+) {
+    if (size < 10) return false;
+    uint8_t buf[37];
+    if (size > sizeof(buf)) size = sizeof(buf);
+    memcpy(buf, rawBuf, size);
+
+    for (uint8_t offset = 0; offset < 2; ++offset) {
+        if (offset) {
+            memcpy(buf, rawBuf, size);
+            for (int x = size - 1; x >= 0; --x) {
+                buf[x] = x ? (uint8_t)((buf[x - 1] << 7) | (buf[x] >> 1)) : (uint8_t)(buf[x] >> 1);
+            }
+        }
+
+        uint8_t payloadLength = buf[5] >> 2;
+        if (!payloadLength || payloadLength > 32 || payloadLength > size - 9) continue;
+
+        uint16_t crcGiven = ((uint16_t)buf[6 + payloadLength] << 9) |
+                            ((uint16_t)buf[7 + payloadLength] << 1);
+        crcGiven = (uint16_t)((crcGiven << 8) | (crcGiven >> 8));
+        if (buf[8 + payloadLength] & 0x80) crcGiven |= 0x0100;
+
+        uint16_t crcCalc = 0xFFFF;
+        for (uint8_t x = 0; x < 6 + payloadLength; ++x) crcCalc = rcCrcUpdate(crcCalc, buf[x], 8);
+        crcCalc = rcCrcUpdate(crcCalc, buf[6 + payloadLength] & 0x80, 1);
+        crcCalc = (uint16_t)((crcCalc << 8) | (crcCalc >> 8));
+        if (crcCalc != crcGiven) continue;
+
+        Packet p;
+        p.channel = channel;
+        p.rate = rateCode(rate);
+        p.addressSize = 5;
+        memcpy(p.address, buf, 5);
+        p.width = payloadLength;
+        p.crc = 2;
+        p.count = 1;
+        p.lengths[0] = payloadLength;
+        for (uint8_t x = 0; x < payloadLength; ++x)
+            p.data[0][x] = (uint8_t)(((buf[6 + x] << 1) & 0xFF) | (buf[7 + x] >> 7));
+        out = p;
+        return true;
+    }
+    return false;
+}
+
+struct AutoCandidate {
+    Packet packet;
+    uint16_t frames = 0;
+};
+
+static bool sameAutoCandidate(const AutoCandidate &a, const Packet &b) {
+    return a.packet.channel == b.channel && a.packet.rate == b.rate &&
+           a.packet.addressSize == b.addressSize && a.packet.width == b.width &&
+           memcmp(a.packet.address, b.address, b.addressSize) == 0;
+}
+
+static void addAutoCandidate(AutoCandidate (&items)[8], uint8_t &used, const Packet &p) {
+    uint8_t idx = used;
+    for (uint8_t i = 0; i < used; ++i) {
+        if (sameAutoCandidate(items[i], p)) { idx = i; break; }
+    }
+    if (idx == used) {
+        if (used >= 8) return;
+        items[idx].packet = p;
+        items[idx].frames = 0;
+        ++used;
+    }
+    AutoCandidate &c = items[idx];
+    ++c.frames;
+    if (c.packet.count < 8) {
+        uint8_t pos = c.packet.count;
+        c.packet.lengths[pos] = p.lengths[0];
+        memcpy(c.packet.data[pos], p.data[0], p.lengths[0]);
+        c.packet.count = pos + 1;
+    }
+}
+
+static bool autoDiscoverProfile(Packet &best) {
+    if (!startRadio()) return false;
+    AutoCandidate candidates[8];
+    uint8_t used = 0;
+    uint32_t rawFrames = 0, rpdSeen = 0;
+    const rf24_datarate_e rates[] = {RF24_250KBPS, RF24_1MBPS, RF24_2MBPS};
+
+    displayInfo("RC AUTO FIND\nOriginal-Taste halten\nSuche Kanal + Rate + ESB/CRC16", true);
+    uint32_t start = millis(), lastUi = 0;
+    while (millis() - start < 12000) {
+        for (auto rate : rates) {
+            configurePromiscuous(rate);
+            for (uint8_t ch = 0; ch < 126; ++ch) {
+                if (check(EscPress)) { stopRadio(); return false; }
+                NRFradio.setChannel(ch);
+                NRFradio.startListening();
+                delayMicroseconds(1000);
+                if (NRFradio.testRPD()) ++rpdSeen;
+                while (NRFradio.available()) {
+                    uint8_t raw[32];
+                    NRFradio.read(raw, sizeof(raw));
+                    ++rawFrames;
+                    Packet p;
+                    if (decodeEsbRaw(raw, sizeof(raw), ch, rate, p)) addAutoCandidate(candidates, used, p);
+                }
+                NRFradio.stopListening();
+                if (millis() - lastUi > 500) {
+                    displayInfo("AUTO FIND\nRate " + String(rateCode(rate) == 2 ? "250K" : rateCode(rate) == 1 ? "2M" : "1M") +
+                                " CH " + String(ch) + "\nRaw " + String(rawFrames) +
+                                " Decode " + String(used));
+                    lastUi = millis();
+                }
+            }
+        }
+    }
+    stopRadio();
+
+    if (!used) {
+        if (rawFrames)
+            displayWarning("Rohpakete gesehen, aber\nkein gueltiges ESB CRC16\nAnderes/geschuetztes Protokoll?", true);
+        else if (rpdSeen)
+            displayWarning("2.4-GHz Aktivitaet gefunden,\naber kein lesbares nRF24-ESB Paket\nTaste naeher am Geraet testen", true);
+        else
+            displayWarning("nRF24 antwortet, aber\nkein 2.4-GHz Signal erkannt\nRC direkt daneben betaetigen", true);
+        return false;
+    }
+
+    uint8_t bestIdx = 0;
+    for (uint8_t i = 1; i < used; ++i)
+        if (candidates[i].frames > candidates[bestIdx].frames) bestIdx = i;
+    best = candidates[bestIdx].packet;
+    if (!saveRecord("autoV1", best)) {
+        displayError("AUTO profile save failed", true);
+        return false;
+    }
+    displaySuccess("RC-Profil automatisch gefunden\nFrames " + String(candidates[bestIdx].frames), true);
+    showPacket(best);
+    return true;
+}
+
+static String slotKey(uint8_t slot) { return "btn" + String(slot); }
+
+static bool captureAutoSlot(uint8_t slot, const Packet &profile) {
+    if (!startRadio()) return false;
+    Packet p = profile;
+    p.count = 0;
+    memset(p.lengths, 0, sizeof(p.lengths));
+    memset(p.data, 0, sizeof(p.data));
+    if (!applyProfile(p)) { stopRadio(); displayError("AUTO profile unsupported", true); return false; }
+    NRFradio.openReadingPipe(1, p.address);
+    NRFradio.startListening();
+    displayInfo(String(AUTO_SLOT_NAMES[slot]) + "\nOriginal-Taste jetzt halten\n6 Sekunden Aufnahme");
+    uint32_t start = millis();
+    while (millis() - start < 6000 && p.count < 8) {
+        if (check(EscPress)) { stopRadio(); return false; }
+        if (NRFradio.available()) {
+            uint8_t n = p.width ? p.width : NRFradio.getDynamicPayloadSize();
+            if (!n || n > 32) { NRFradio.flush_rx(); continue; }
+            NRFradio.read(p.data[p.count], n);
+            p.lengths[p.count++] = n;
+        }
+        delay(1);
+    }
+    stopRadio();
+    if (!p.count) return false;
+    String key = slotKey(slot);
+    if (!saveRecord(key.c_str(), p)) { displayError("Taste speichern fehlgeschlagen", true); return false; }
+    displaySuccess(String(AUTO_SLOT_NAMES[slot]) + "\ngespeichert: " + String(p.count) + " Frames", true);
+    return true;
+}
+
+static void learnAutoSlot(uint8_t slot) {
+    Packet profile;
+    if (loadRecord("autoV1", profile)) {
+        if (captureAutoSlot(slot, profile)) return;
+        displayWarning("Bekanntes Profil empfing nichts.\nAUTO FIND startet jetzt neu.", true);
+    }
+    Packet discovered;
+    if (!autoDiscoverProfile(discovered)) return;
+    String key = slotKey(slot);
+    if (!saveRecord(key.c_str(), discovered)) {
+        displayError("Erstes Tastensignal speichern fehlgeschlagen", true);
+        return;
+    }
+    displaySuccess(String(AUTO_SLOT_NAMES[slot]) + "\nautomatisch gelernt", true);
+}
+
+static void replayAutoSlot(uint8_t slot) {
+    Packet p;
+    String key = slotKey(slot);
+    if (!loadRecord(key.c_str(), p)) {
+        displayWarning(String(AUTO_SLOT_NAMES[slot]) + "\nnoch nicht gelernt", true);
+        return;
+    }
+    if (!startRadio()) return;
+    if (!applyProfile(p)) { stopRadio(); displayError("Gespeichertes Profil ungueltig", true); return; }
+    NRFradio.openWritingPipe(p.address);
+    uint16_t sent = 0;
+    for (uint8_t repeat = 0; repeat < 4 && !check(EscPress); ++repeat) {
+        for (uint8_t i = 0; i < p.count && !check(EscPress); ++i) {
+            if (NRFradio.write(p.data[i], p.lengths[i])) ++sent;
+            delay(12);
+        }
+    }
+    stopRadio();
+    displayInfo(String(AUTO_SLOT_NAMES[slot]) + "\nTX Frames " + String(sent) +
+                "\nKeine Wirkung = Pairing/Hopping/Counter", true);
+}
+
+void nrf_rc_auto_find() {
+    Packet p;
+    autoDiscoverProfile(p);
+}
+
+void nrf_rc_auto_learn() {
+    remoteMenu({
+        {"Vorwaerts lernen", []() { learnAutoSlot(0); }},
+        {"Rueckwaerts lernen", []() { learnAutoSlot(1); }},
+        {"Links lernen", []() { learnAutoSlot(2); }},
+        {"Rechts lernen", []() { learnAutoSlot(3); }},
+        {"Turbo lernen", []() { learnAutoSlot(4); }},
+        {"Licht lernen", []() { learnAutoSlot(5); }},
+        {"Taste 7 lernen", []() { learnAutoSlot(6); }},
+        {"Taste 8 lernen", []() { learnAutoSlot(7); }},
+    }, "RC AUTO LEARN");
+}
+
+void nrf_rc_auto_saved() {
+    remoteMenu({
+        {"Vorwaerts senden", []() { replayAutoSlot(0); }},
+        {"Rueckwaerts senden", []() { replayAutoSlot(1); }},
+        {"Links senden", []() { replayAutoSlot(2); }},
+        {"Rechts senden", []() { replayAutoSlot(3); }},
+        {"Turbo senden", []() { replayAutoSlot(4); }},
+        {"Licht senden", []() { replayAutoSlot(5); }},
+        {"Taste 7 senden", []() { replayAutoSlot(6); }},
+        {"Taste 8 senden", []() { replayAutoSlot(7); }},
+        {"AUTO Profil anzeigen", []() {
+            Packet p;
+            if (loadRecord("autoV1", p)) showPacket(p);
+            else displayWarning("Noch kein AUTO Profil", true);
+        }},
+    }, "Gelernte RC-Tasten");
 }
 static void capture() {
     displayInfo("Known own fixed-code devices\nAddress/rate/CRC must match\nNot a universal sniffer", true);
