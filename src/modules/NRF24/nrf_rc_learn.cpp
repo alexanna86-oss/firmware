@@ -340,6 +340,118 @@ static bool autoDiscoverProfile(Packet &best) {
 
 static String slotKey(uint8_t slot) { return "btn" + String(slot); }
 
+
+static const char *safeRateName(uint8_t rate) {
+    return rate == 2 ? "250K" : rate == 1 ? "2M" : "1M";
+}
+
+static void saveSafeTune(uint8_t slot, uint8_t channel, uint8_t rate, uint16_t hits) {
+    Preferences p;
+    if (!p.begin("nrf-rc-learn", false)) return;
+    String base = "safe" + String(slot);
+    p.putUChar((base + "c").c_str(), channel);
+    p.putUChar((base + "r").c_str(), rate);
+    p.putUShort((base + "h").c_str(), hits);
+    p.end();
+}
+
+static bool loadSafeTune(uint8_t slot, uint8_t &channel, uint8_t &rate, uint16_t &hits) {
+    Preferences p;
+    if (!p.begin("nrf-rc-learn", true)) return false;
+    String base = "safe" + String(slot);
+    bool ok = p.isKey((base + "c").c_str()) && p.isKey((base + "r").c_str());
+    if (ok) {
+        channel = p.getUChar((base + "c").c_str(), 0);
+        rate = p.getUChar((base + "r").c_str(), 0);
+        hits = p.getUShort((base + "h").c_str(), 0);
+    }
+    p.end();
+    return ok && channel <= 125 && rate <= 2;
+}
+
+static bool safeFindSignal(uint8_t slot, bool saveSlot) {
+    displayInfo(
+        String(saveSlot ? AUTO_SLOT_NAMES[slot] : "RC SAFE SIGNAL") +
+        "\nOriginal-RC Taste gedrueckt halten\nOK = sicherer Scan",
+        true
+    );
+    delay(250);
+
+    if (!startRadio()) return false;
+
+    static uint16_t hits[3][126];
+    memset(hits, 0, sizeof(hits));
+    const rf24_datarate_e rates[] = {RF24_250KBPS, RF24_1MBPS, RF24_2MBPS};
+    const uint8_t dummyAddress[5] = {0xE7, 0xE7, 0xE7, 0xE7, 0xE7};
+
+    NRFradio.setAutoAck(false);
+    NRFradio.disableAckPayload();
+    NRFradio.disableDynamicPayloads();
+    NRFradio.setAddressWidth(5);
+    NRFradio.setPayloadSize(32);
+    NRFradio.openReadingPipe(1, dummyAddress);
+
+    // No TFT drawing while the shared SPI bus is being used by nRF24.
+    // RPD only measures RF energy; it does not require knowing the transmitter address.
+    constexpr uint8_t passes = 32;
+    for (uint8_t pass = 0; pass < passes; ++pass) {
+        for (uint8_t ri = 0; ri < 3; ++ri) {
+            NRFradio.setDataRate(rates[ri]);
+            for (uint8_t ch = 0; ch < 126; ++ch) {
+                if (check(EscPress)) {
+                    stopRadio();
+                    displayWarning("RC SAFE Scan abgebrochen", true);
+                    return false;
+                }
+                NRFradio.setChannel(ch);
+                NRFradio.startListening();
+                delayMicroseconds(180);
+                bool hit = NRFradio.testRPD();
+                NRFradio.stopListening();
+                if (hit && hits[ri][ch] < 0xFFFF) ++hits[ri][ch];
+                if ((ch & 7) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+
+    stopRadio();
+    delay(150);
+
+    uint8_t bestRateIndex = 0, bestChannel = 0;
+    uint16_t bestHits = 0;
+    for (uint8_t ri = 0; ri < 3; ++ri) {
+        for (uint8_t ch = 0; ch < 126; ++ch) {
+            if (hits[ri][ch] > bestHits) {
+                bestHits = hits[ri][ch];
+                bestRateIndex = ri;
+                bestChannel = ch;
+            }
+        }
+    }
+
+    if (!bestHits) {
+        displayWarning(
+            "RC SAFE: kein starkes 2.4GHz Signal\nRC direkt daneben halten\nund Taste dauernd druecken",
+            true
+        );
+        return false;
+    }
+
+    uint8_t rate = rateCode(rates[bestRateIndex]);
+    if (saveSlot) saveSafeTune(slot, bestChannel, rate, bestHits);
+
+    displaySuccess(
+        String(saveSlot ? AUTO_SLOT_NAMES[slot] : "RC SAFE") +
+        "\nSignal gefunden: CH " + String(bestChannel) +
+        " / " + safeRateName(rate) +
+        "\nTreffer " + String(bestHits) + "/" + String(passes) +
+        "\nRohdecoder aus Sicherheitsgruenden AUS",
+        true
+    );
+    return true;
+}
+
 static bool captureAutoSlot(uint8_t slot, const Packet &profile) {
     if (!startRadio()) return false;
     Packet p = profile;
@@ -370,26 +482,28 @@ static bool captureAutoSlot(uint8_t slot, const Packet &profile) {
 }
 
 static void learnAutoSlot(uint8_t slot) {
-    Packet profile;
-    if (loadRecord("autoV1", profile)) {
-        if (captureAutoSlot(slot, profile)) return;
-        displayWarning("Bekanntes Profil empfing nichts.\nAUTO FIND startet jetzt neu.", true);
-    }
-    Packet discovered;
-    if (!autoDiscoverProfile(discovered)) return;
-    String key = slotKey(slot);
-    if (!saveRecord(key.c_str(), discovered)) {
-        displayError("Erstes Tastensignal speichern fehlgeschlagen", true);
-        return;
-    }
-    displaySuccess(String(AUTO_SLOT_NAMES[slot]) + "\nautomatisch gelernt", true);
+    // SAFE mode: first identify a stable channel/rate without using the
+    // experimental 2-byte promiscuous decoder that caused resets/blanking
+    // on the user's T-Embed CC1101 Plus.
+    safeFindSignal(slot, true);
 }
 
 static void replayAutoSlot(uint8_t slot) {
     Packet p;
     String key = slotKey(slot);
     if (!loadRecord(key.c_str(), p)) {
-        displayWarning(String(AUTO_SLOT_NAMES[slot]) + "\nnoch nicht gelernt", true);
+        uint8_t ch = 0, rate = 0;
+        uint16_t hits = 0;
+        if (loadSafeTune(slot, ch, rate, hits)) {
+            displayInfo(
+                String(AUTO_SLOT_NAMES[slot]) + "\nSAFE Profil: CH " + String(ch) +
+                " / " + safeRateName(rate) +
+                "\nNoch keine TX-Pakete decodiert",
+                true
+            );
+        } else {
+            displayWarning(String(AUTO_SLOT_NAMES[slot]) + "\nnoch nicht gelernt", true);
+        }
         return;
     }
     if (!startRadio()) return;
@@ -408,8 +522,7 @@ static void replayAutoSlot(uint8_t slot) {
 }
 
 void nrf_rc_auto_find() {
-    Packet p;
-    autoDiscoverProfile(p);
+    safeFindSignal(0, false);
 }
 
 void nrf_rc_auto_learn() {
@@ -422,7 +535,7 @@ void nrf_rc_auto_learn() {
         {"Licht lernen", []() { learnAutoSlot(5); }},
         {"Taste 7 lernen", []() { learnAutoSlot(6); }},
         {"Taste 8 lernen", []() { learnAutoSlot(7); }},
-    }, "RC AUTO LEARN");
+    }, "RC SAFE LEARN");
 }
 
 void nrf_rc_auto_saved() {
